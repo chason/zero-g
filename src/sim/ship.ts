@@ -66,7 +66,7 @@ export type ControlGroups = Record<ControlAxis, { positive: number[]; negative: 
  *   torque   = position x force
  *   massFlow = thrust / (isp * G0)
  *
- * TODO — implement. Spec: test/ship.test.ts.
+ * Spec: test/ship.test.ts.
  */
 export function prepare(spec: ShipSpec): PreparedThruster[] {
   return spec.thrusters.map((thruster) => {
@@ -93,8 +93,6 @@ export function prepare(spec: ShipSpec): PreparedThruster[] {
 /**
  * Sum the open thrusters into a single body-frame wrench.
  * This runs every tick and is the hot path; it should allocate nothing.
- *
- * TODO — implement.
  */
 export function netWrench(ship: Ship, out?: Wrench): Wrench {
   const wrench = out ?? { force: new Vector3(), torque: new Vector3() };
@@ -160,8 +158,6 @@ export function currentMass(ship: Ship): number {
  * cancelling everything else. Hand-authored groups are fine for a symmetric ship;
  * a least-squares solve over the thruster matrix generalises to asymmetric ones.
  * Built once at load time, never per frame.
- *
- * TODO — implement.
  */
 export function solveControlGroups(prepared: PreparedThruster[]): ControlGroups {
   // Each thruster is a 6-vector [Fx, Fy, Fz, Tx, Ty, Tz]; axis i of CONTROL_AXES is

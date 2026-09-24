@@ -19,6 +19,9 @@ export function createWorld(ships: Ship[] = []): World {
 /** Scratch wrench, reused every tick so the hot path allocates nothing. */
 const scratchWrench: Wrench = { force: new Vector3(), torque: new Vector3() };
 
+/** Scratch per-axis clamp suppression, reused for the same reason. */
+const scratchCommanded = { x: false, y: false, z: false };
+
 /**
  * Advance the whole world by exactly `dt` seconds. Never call with a variable dt.
  *
@@ -39,11 +42,15 @@ export function step(world: World, command: Command, dt: number): void {
 
     // 3. integrate at the mass the ship has RIGHT NOW, before this step's burn
     ship.body.mass = currentMass(ship);
-    let firing = false;
-    for (let i = 0; i < throttles.length; i++) {
-      if (throttles[i] !== 0) { firing = true; break; }
-    }
-    integrate(ship.body, wrench, dt, firing);
+    // The zero clamp is suppressed per AXIS, not per ship. "Some thruster is open" is
+    // too coarse: the main engine sits on the centreline and produces no torque, so
+    // burning it used to disable the rotation clamp about all three axes and let
+    // residual spin survive a long burn. An axis is under command exactly when the open
+    // thrusters produce net torque about it, which the wrench already tells us.
+    scratchCommanded.x = wrench.torque.x !== 0;
+    scratchCommanded.y = wrench.torque.y !== 0;
+    scratchCommanded.z = wrench.torque.z !== 0;
+    integrate(ship.body, wrench, dt, scratchCommanded);
 
     // 4. burn propellant, floored at zero so mass can never fall below dry mass
     const burned = massFlow(ship) * dt;

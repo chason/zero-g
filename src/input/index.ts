@@ -27,10 +27,11 @@ export interface InputDevice {
 }
 
 export const FINE_SCALE = 0.15;
-/** A tap fires for this long, giving a known quantum of delta-v. */
+/**
+ * A press opens its thruster for at LEAST this long, giving a known quantum of delta-v.
+ * Any tap at or under PULSE_MS delivers exactly the same impulse, so taps stay countable.
+ */
 export const PULSE_MS = 60;
-/** Held past this, the thruster opens continuously instead. */
-export const HOLD_MS = 200;
 /** The virtual stick recentres over roughly this long with no input. */
 export const SPRING_MS = 300;
 
@@ -94,16 +95,15 @@ export interface KeyboardMouseDevice extends InputDevice {
   readonly locked: boolean;
 }
 
-/** One pulse-key's state machine: tap = exactly PULSE_MS, hold past HOLD_MS = until release. */
+/** One pulse-key's state machine: open while down, for a minimum of PULSE_MS. */
 interface KeyState {
   downAt: number;
   down: boolean;
-  held: boolean;
 }
 
 /**
  * Rotational controller = mouse (proportional, squared curve, springs to centre).
- * Translational controller = W/S A/D R/F (pulse: tap = PULSE_MS, hold past HOLD_MS = continuous).
+ * Translational controller = W/S A/D R/F (open while held, minimum PULSE_MS per press).
  * The two never share an axis, so they compose with no arbitration rule.
  *
  * Both the clock and the event sources are injectable, so the pulse state machine and the
@@ -197,7 +197,7 @@ export function createKeyboardMouse(
     if (!PULSE_BINDINGS.some((b) => b.code === code)) return;
     const state = keys.get(code);
     if (state && state.down) return;
-    keys.set(code, { downAt: now(), down: true, held: false });
+    keys.set(code, { downAt: now(), down: true });
   }
 
   function onKeyUp(event: { code?: string; key?: string }): void {
@@ -213,8 +213,8 @@ export function createKeyboardMouse(
     const state = keys.get(code);
     if (!state) return;
     state.down = false;
-    // A hold ends on release; a tap keeps firing until its PULSE_MS is spent.
-    if (state.held) keys.delete(code);
+    // The state stays until sample() sees the minimum PULSE_MS spent: a tap released
+    // early must keep firing to the 60 ms mark, and a longer press ends here.
   }
 
   if (keySource) {
@@ -267,12 +267,13 @@ export function createKeyboardMouse(
         const state = keys.get(binding.code);
         if (!state) continue;
         const elapsed = t - state.downAt;
-        // Tap and hold cannot be told apart before HOLD_MS, and a press shorter than
-        // HOLD_MS must fire for exactly PULSE_MS and no longer. So the thruster shuts at
-        // PULSE_MS regardless, and reopens only once the press outlives HOLD_MS. That
-        // makes every tap the same impulse, which is what lets a player count them.
-        if (state.down && elapsed >= HOLD_MS) state.held = true;
-        const open = state.held ? state.down : elapsed < PULSE_MS;
+        // The thruster is open while the key is down, with a MINIMUM open time of
+        // PULSE_MS. Released early, it stays open to exactly the PULSE_MS mark, so every
+        // tap at or under 60 ms is the same quantum of delta-v and taps stay countable.
+        // Held longer, it is open continuously from t=0 until release: there is no point
+        // at which a held key stops thrusting, which is what the old HOLD_MS gate got
+        // wrong (issue #30).
+        const open = state.down || elapsed < PULSE_MS;
         if (open) {
           axes[binding.channel][binding.axis] = clamp(
             axes[binding.channel][binding.axis] + binding.sign,
