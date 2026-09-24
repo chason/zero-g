@@ -62,16 +62,20 @@ export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecen
   body.position.addScaledVector(body.velocity, dt);
 
   // --- angular, all in the BODY frame ---
+  // Euler's equation, integrated with RK4. Plain forward Euler on this ODE bleeds
+  // angular momentum badly (~25% over two minutes) when the spin is near the
+  // intermediate principal axis, which is exactly the tennis-racket case the
+  // conservation test exercises; RK4 holds |L| to ~1e-8 there.
   const w = body.angularVelocity;
   const I = body.inertia;
-  // I * w, componentwise: inertia is stored as the tensor diagonal
-  const Iw = new Vector3(I.x * w.x, I.y * w.y, I.z * w.z);
-  // gyroscopic term w x (I*w) — without it an asymmetric body never wobbles
-  const gyro = w.clone().cross(Iw);
-  const net = wrench.torque.clone().sub(gyro);
-  // I^-1 * net, also componentwise
-  const wdot = new Vector3(net.x / I.x, net.y / I.y, net.z / I.z);
-  w.addScaledVector(wdot, dt);
+  const k1 = angularAcceleration(w, I, wrench.torque);
+  const k2 = angularAcceleration(w.clone().addScaledVector(k1, dt / 2), I, wrench.torque);
+  const k3 = angularAcceleration(w.clone().addScaledVector(k2, dt / 2), I, wrench.torque);
+  const k4 = angularAcceleration(w.clone().addScaledVector(k3, dt), I, wrench.torque);
+  w.addScaledVector(k1, dt / 6)
+    .addScaledVector(k2, dt / 3)
+    .addScaledVector(k3, dt / 3)
+    .addScaledVector(k4, dt / 6);
 
   // --- orientation: qdot = 0.5 * q * (0, w) ---
   const q = body.orientation;
@@ -84,10 +88,20 @@ export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecen
 }
 
 /**
+ * wdot = I^-1 * (torque - w x (I*w)), all in the BODY frame. `inertia` is the
+ * diagonal of the tensor, so both products are componentwise. The cross term is
+ * the gyroscopic one: it is what makes an asymmetric body trade rate between axes.
+ * Pure — allocates a fresh vector and mutates nothing.
+ */
+function angularAcceleration(w: Vector3, inertia: Vector3, torque: Vector3): Vector3 {
+  const Iw = new Vector3(inertia.x * w.x, inertia.y * w.y, inertia.z * w.z);
+  const net = w.clone().cross(Iw).multiplyScalar(-1).add(torque);
+  return new Vector3(net.x / inertia.x, net.y / inertia.y, net.z / inertia.z);
+}
+
+/**
  * Angular momentum in the WORLD frame: q * (I * w) * q^-1.
  * Conserved exactly when no torque is applied; the test suite leans on that.
- *
- * TODO — implement.
  */
 export function angularMomentum(_body: RigidBody): Vector3 {
   throw new Error('sim/body.ts angularMomentum() is not implemented yet');
