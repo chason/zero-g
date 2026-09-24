@@ -95,13 +95,40 @@ export function prepare(spec: ShipSpec): PreparedThruster[] {
  *
  * TODO — implement.
  */
-export function netWrench(_ship: Ship, _out?: Wrench): Wrench {
-  throw new Error('sim/ship.ts netWrench() is not implemented yet');
+export function netWrench(ship: Ship, out?: Wrench): Wrench {
+  const wrench = out ?? { force: new Vector3(), torque: new Vector3() };
+  const { force, torque } = wrench;
+  force.set(0, 0, 0);
+  torque.set(0, 0, 0);
+
+  const { prepared, throttles } = ship;
+  for (let i = 0; i < prepared.length; i++) {
+    const throttle = throttles[i]!;
+    if (throttle === 0) continue;
+    const t = prepared[i]!;
+    // Component-wise rather than addScaledVector to keep this allocation-free and
+    // obvious; this is the per-tick hot path.
+    force.x += t.force.x * throttle;
+    force.y += t.force.y * throttle;
+    force.z += t.force.z * throttle;
+    torque.x += t.torque.x * throttle;
+    torque.y += t.torque.y * throttle;
+    torque.z += t.torque.z * throttle;
+  }
+
+  return wrench;
 }
 
 /** Total kg/s currently being consumed. Feeds back into mass, which feeds back into acceleration. */
-export function massFlow(_ship: Ship): number {
-  throw new Error('sim/ship.ts massFlow() is not implemented yet');
+export function massFlow(ship: Ship): number {
+  const { prepared, throttles } = ship;
+  let total = 0;
+  for (let i = 0; i < prepared.length; i++) {
+    const throttle = throttles[i]!;
+    if (throttle === 0) continue;
+    total += prepared[i]!.massFlow * throttle;
+  }
+  return total;
 }
 
 /** Current total mass. Never hardcode this — cargo and propellant both move it. */
