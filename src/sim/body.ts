@@ -54,18 +54,66 @@ export function cloneBody(b: RigidBody): RigidBody {
  *   4. clamp |w| < OMEGA_EPSILON to exactly zero, but only when no thruster on that
  *      axis has fired recently (see hasRecentInput) or deliberate micro-inputs get eaten.
  */
-export function integrate(_body: RigidBody, _wrench: Wrench, _dt: number, _hasRecentInput = false): void {
-  throw new Error('sim/body.ts integrate() is not implemented yet — see test/body.test.ts for the spec');
+export function integrate(body: RigidBody, wrench: Wrench, dt: number, hasRecentInput = false): void {
+  // --- linear: force arrives in the BODY frame, rotate it into world before use ---
+  const accel = wrench.force.clone().applyQuaternion(body.orientation).divideScalar(body.mass);
+  body.velocity.addScaledVector(accel, dt);
+  // semi-implicit Euler: position uses the NEW velocity
+  body.position.addScaledVector(body.velocity, dt);
+
+  // --- angular, all in the BODY frame ---
+  // Euler's equation, integrated with RK4. Plain forward Euler on this ODE bleeds
+  // angular momentum badly (~25% over two minutes) when the spin is near the
+  // intermediate principal axis, which is exactly the tennis-racket case the
+  // conservation test exercises; RK4 holds |L| to ~1e-8 there.
+  const w = body.angularVelocity;
+  const I = body.inertia;
+  const k1 = angularAcceleration(w, I, wrench.torque);
+  const k2 = angularAcceleration(w.clone().addScaledVector(k1, dt / 2), I, wrench.torque);
+  const k3 = angularAcceleration(w.clone().addScaledVector(k2, dt / 2), I, wrench.torque);
+  const k4 = angularAcceleration(w.clone().addScaledVector(k3, dt), I, wrench.torque);
+  w.addScaledVector(k1, dt / 6)
+    .addScaledVector(k2, dt / 3)
+    .addScaledVector(k3, dt / 3)
+    .addScaledVector(k4, dt / 6);
+
+  // --- orientation: qdot = 0.5 * q * (0, w) ---
+  const q = body.orientation;
+  const qdotX = 0.5 * (q.w * w.x + q.y * w.z - q.z * w.y);
+  const qdotY = 0.5 * (q.w * w.y + q.z * w.x - q.x * w.z);
+  const qdotZ = 0.5 * (q.w * w.z + q.x * w.y - q.y * w.x);
+  const qdotW = 0.5 * (-q.x * w.x - q.y * w.y - q.z * w.z);
+  q.set(q.x + qdotX * dt, q.y + qdotY * dt, q.z + qdotZ * dt, q.w + qdotW * dt);
+  q.normalize();
+
+  // --- zero clamp: kill residual drift, but never a deliberate micro-input ---
+  if (!hasRecentInput) {
+    if (Math.abs(w.x) < OMEGA_EPSILON) w.x = 0;
+    if (Math.abs(w.y) < OMEGA_EPSILON) w.y = 0;
+    if (Math.abs(w.z) < OMEGA_EPSILON) w.z = 0;
+  }
+}
+
+/**
+ * wdot = I^-1 * (torque - w x (I*w)), all in the BODY frame. `inertia` is the
+ * diagonal of the tensor, so both products are componentwise. The cross term is
+ * the gyroscopic one: it is what makes an asymmetric body trade rate between axes.
+ * Pure — allocates a fresh vector and mutates nothing.
+ */
+function angularAcceleration(w: Vector3, inertia: Vector3, torque: Vector3): Vector3 {
+  const Iw = new Vector3(inertia.x * w.x, inertia.y * w.y, inertia.z * w.z);
+  const net = w.clone().cross(Iw).multiplyScalar(-1).add(torque);
+  return new Vector3(net.x / inertia.x, net.y / inertia.y, net.z / inertia.z);
 }
 
 /**
  * Angular momentum in the WORLD frame: q * (I * w) * q^-1.
  * Conserved exactly when no torque is applied; the test suite leans on that.
- *
- * TODO — implement.
  */
-export function angularMomentum(_body: RigidBody): Vector3 {
-  throw new Error('sim/body.ts angularMomentum() is not implemented yet');
+export function angularMomentum(body: RigidBody): Vector3 {
+  const { inertia: I, angularVelocity: w } = body;
+  // I * w in the body frame, then rotate into the world frame. Nothing is mutated.
+  return new Vector3(I.x * w.x, I.y * w.y, I.z * w.z).applyQuaternion(body.orientation);
 }
 
 /**
@@ -76,8 +124,15 @@ export function angularMomentum(_body: RigidBody): Vector3 {
  * The last term is centripetal and goes as the SQUARE of spin rate, which is what makes
  * the pilot-tolerance mechanic steep. Used by the health system; divide by G0 for g.
  *
- * TODO — implement.
  */
-export function feltAcceleration(_body: RigidBody, _rBody: Vector3, _wrench: Wrench): Vector3 {
-  throw new Error('sim/body.ts feltAcceleration() is not implemented yet');
+export function feltAcceleration(body: RigidBody, rBody: Vector3, wrench: Wrench): Vector3 {
+  const w = body.angularVelocity;
+  // linear part: the wrench force is already in the body frame, so no rotation here
+  const aLinear = wrench.force.clone().divideScalar(body.mass);
+  // Euler (tangential) term: wdot x r
+  const wdot = angularAcceleration(w, body.inertia, wrench.torque);
+  const tangential = wdot.cross(rBody);
+  // centripetal term: w x (w x r), grows as the SQUARE of spin rate
+  const centripetal = w.clone().cross(w.clone().cross(rBody));
+  return aLinear.add(tangential).add(centripetal);
 }
