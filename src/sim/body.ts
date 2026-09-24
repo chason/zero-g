@@ -54,7 +54,7 @@ export function cloneBody(b: RigidBody): RigidBody {
  *   4. clamp |w| < OMEGA_EPSILON to exactly zero, but only when no thruster on that
  *      axis has fired recently (see hasRecentInput) or deliberate micro-inputs get eaten.
  */
-export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecentInput = false): void {
+export function integrate(body: RigidBody, wrench: Wrench, dt: number, hasRecentInput = false): void {
   // --- linear: force arrives in the BODY frame, rotate it into world before use ---
   const accel = wrench.force.clone().applyQuaternion(body.orientation).divideScalar(body.mass);
   body.velocity.addScaledVector(accel, dt);
@@ -85,6 +85,13 @@ export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecen
   const qdotW = 0.5 * (-q.x * w.x - q.y * w.y - q.z * w.z);
   q.set(q.x + qdotX * dt, q.y + qdotY * dt, q.z + qdotZ * dt, q.w + qdotW * dt);
   q.normalize();
+
+  // --- zero clamp: kill residual drift, but never a deliberate micro-input ---
+  if (!hasRecentInput) {
+    if (Math.abs(w.x) < OMEGA_EPSILON) w.x = 0;
+    if (Math.abs(w.y) < OMEGA_EPSILON) w.y = 0;
+    if (Math.abs(w.z) < OMEGA_EPSILON) w.z = 0;
+  }
 }
 
 /**
