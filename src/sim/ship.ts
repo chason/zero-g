@@ -67,8 +67,26 @@ export type ControlGroups = Record<ControlAxis, { positive: number[]; negative: 
  *
  * TODO — implement. Spec: test/ship.test.ts.
  */
-export function prepare(_spec: ShipSpec): PreparedThruster[] {
-  throw new Error('sim/ship.ts prepare() is not implemented yet — see test/ship.test.ts');
+export function prepare(spec: ShipSpec): PreparedThruster[] {
+  return spec.thrusters.map((thruster) => {
+    // Normalise defensively: a hand-edited data file may hold a non-unit direction,
+    // and a thruster that pushed harder because someone typed [0, 0, -1.02] would be
+    // a miserable bug to find later.
+    const dir = new Vector3(...thruster.direction);
+    const len = dir.length();
+    if (len > 0) dir.divideScalar(len);
+
+    const force = dir.multiplyScalar(thruster.thrust);
+    const position = new Vector3(...thruster.position);
+    const torque = new Vector3().crossVectors(position, force);
+
+    return {
+      spec: thruster,
+      force,
+      torque,
+      massFlow: thruster.thrust / (thruster.isp * G0),
+    };
+  });
 }
 
 /**
