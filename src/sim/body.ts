@@ -103,8 +103,10 @@ function angularAcceleration(w: Vector3, inertia: Vector3, torque: Vector3): Vec
  * Angular momentum in the WORLD frame: q * (I * w) * q^-1.
  * Conserved exactly when no torque is applied; the test suite leans on that.
  */
-export function angularMomentum(_body: RigidBody): Vector3 {
-  throw new Error('sim/body.ts angularMomentum() is not implemented yet');
+export function angularMomentum(body: RigidBody): Vector3 {
+  const { inertia: I, angularVelocity: w } = body;
+  // I * w in the body frame, then rotate into the world frame. Nothing is mutated.
+  return new Vector3(I.x * w.x, I.y * w.y, I.z * w.z).applyQuaternion(body.orientation);
 }
 
 /**
