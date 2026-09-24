@@ -117,8 +117,15 @@ export function angularMomentum(body: RigidBody): Vector3 {
  * The last term is centripetal and goes as the SQUARE of spin rate, which is what makes
  * the pilot-tolerance mechanic steep. Used by the health system; divide by G0 for g.
  *
- * TODO — implement.
  */
-export function feltAcceleration(_body: RigidBody, _rBody: Vector3, _wrench: Wrench): Vector3 {
-  throw new Error('sim/body.ts feltAcceleration() is not implemented yet');
+export function feltAcceleration(body: RigidBody, rBody: Vector3, wrench: Wrench): Vector3 {
+  const w = body.angularVelocity;
+  // linear part: the wrench force is already in the body frame, so no rotation here
+  const aLinear = wrench.force.clone().divideScalar(body.mass);
+  // Euler (tangential) term: wdot x r
+  const wdot = angularAcceleration(w, body.inertia, wrench.torque);
+  const tangential = wdot.cross(rBody);
+  // centripetal term: w x (w x r), grows as the SQUARE of spin rate
+  const centripetal = w.clone().cross(w.clone().cross(rBody));
+  return aLinear.add(tangential).add(centripetal);
 }
