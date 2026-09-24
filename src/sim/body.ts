@@ -54,8 +54,12 @@ export function cloneBody(b: RigidBody): RigidBody {
  *   4. clamp |w| < OMEGA_EPSILON to exactly zero, but only when no thruster on that
  *      axis has fired recently (see hasRecentInput) or deliberate micro-inputs get eaten.
  */
-export function integrate(_body: RigidBody, _wrench: Wrench, _dt: number, _hasRecentInput = false): void {
-  throw new Error('sim/body.ts integrate() is not implemented yet — see test/body.test.ts for the spec');
+export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecentInput = false): void {
+  // --- linear: force arrives in the BODY frame, rotate it into world before use ---
+  const accel = wrench.force.clone().applyQuaternion(body.orientation).divideScalar(body.mass);
+  body.velocity.addScaledVector(accel, dt);
+  // semi-implicit Euler: position uses the NEW velocity
+  body.position.addScaledVector(body.velocity, dt);
 }
 
 /**
