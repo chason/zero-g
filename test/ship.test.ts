@@ -97,3 +97,13 @@ describe('control groups', () => {
     expect(sum(lat, 'force').x).toBeGreaterThan(0);
   });
 });
+
+describe('ship data integrity', () => {
+  it('has a thruster group for both signs of every axis', () => {
+    const groups = solveControlGroups(prepare(spec));
+    for (const axis of Object.keys(groups) as (keyof typeof groups)[]) {
+      expect(groups[axis].positive.length, `${axis} positive`).toBeGreaterThan(0);
+      expect(groups[axis].negative.length, `${axis} negative`).toBeGreaterThan(0);
+    }
+  });
+});
