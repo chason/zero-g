@@ -1,0 +1,39 @@
+# CI is red, and that is the point.
+#
+# The simulation is deliberately unimplemented: every stub throws and the whole
+# suite in test/ is a specification written ahead of the code. So `npm test`
+# fails on main today. Each issue turns a named block of tests green; the badge
+# going green is the finish line, not the starting condition.
+#
+# Do not add `continue-on-error`, `|| true`, or skips to make this pass. A green
+# badge over unimplemented physics is a lie that costs more than a red one.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: typecheck and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Both steps are hard gates: a failure here fails the job.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
