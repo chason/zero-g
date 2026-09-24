@@ -28,6 +28,14 @@ export interface Wrench {
 /** Below this the rotation clamp engages. 0.0003 rad/s is ~0.017 deg/s: six times finer than the HUD resolves. */
 export const OMEGA_EPSILON = 3e-4;
 
+/**
+ * Which axes are being commanded right now, and so must NOT have the zero clamp applied.
+ * A single boolean means all three; the per-axis form lets the caller suppress the clamp
+ * only about the axes the open thrusters actually torque, so firing the main engine — which
+ * produces no torque at all — no longer disables the clamp on every axis.
+ */
+export type RecentInput = boolean | { x: boolean; y: boolean; z: boolean };
+
 export function createBody(init: Partial<RigidBody> = {}): RigidBody {
   return {
     position: init.position?.clone() ?? new Vector3(),
@@ -54,7 +62,12 @@ export function cloneBody(b: RigidBody): RigidBody {
  *   4. clamp |w| < OMEGA_EPSILON to exactly zero, but only when no thruster on that
  *      axis has fired recently (see hasRecentInput) or deliberate micro-inputs get eaten.
  */
-export function integrate(body: RigidBody, wrench: Wrench, dt: number, hasRecentInput = false): void {
+export function integrate(
+  body: RigidBody,
+  wrench: Wrench,
+  dt: number,
+  hasRecentInput: RecentInput = false,
+): void {
   // --- linear: force arrives in the BODY frame, rotate it into world before use ---
   const accel = wrench.force.clone().applyQuaternion(body.orientation).divideScalar(body.mass);
   body.velocity.addScaledVector(accel, dt);
@@ -87,10 +100,15 @@ export function integrate(body: RigidBody, wrench: Wrench, dt: number, hasRecent
   q.normalize();
 
   // --- zero clamp: kill residual drift, but never a deliberate micro-input ---
-  if (!hasRecentInput) {
-    if (Math.abs(w.x) < OMEGA_EPSILON) w.x = 0;
-    if (Math.abs(w.y) < OMEGA_EPSILON) w.y = 0;
-    if (Math.abs(w.z) < OMEGA_EPSILON) w.z = 0;
+  // Per axis: an axis under command keeps whatever rate the pilot is building on it,
+  // while the others still get their residual killed. No allocation here — this is the
+  // per-step hot path — so the boolean and per-axis forms are read in place.
+  const perAxis = typeof hasRecentInput === 'boolean' ? null : hasRecentInput;
+  const all = hasRecentInput === true;
+  if (!all) {
+    if (!perAxis?.x && Math.abs(w.x) < OMEGA_EPSILON) w.x = 0;
+    if (!perAxis?.y && Math.abs(w.y) < OMEGA_EPSILON) w.y = 0;
+    if (!perAxis?.z && Math.abs(w.z) < OMEGA_EPSILON) w.z = 0;
   }
 }
 
