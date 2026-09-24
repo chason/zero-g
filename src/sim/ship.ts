@@ -1,4 +1,5 @@
 import { Vector3, G0 } from '../core/math';
+import { createBody } from './body';
 import type { RigidBody, Wrench } from './body';
 
 /** One thruster, as it appears in a ship data file. Body frame throughout. */
@@ -117,6 +118,24 @@ export function netWrench(ship: Ship, out?: Wrench): Wrench {
   }
 
   return wrench;
+}
+
+/**
+ * Build a flight-ready Ship from a data file. Mass and inertia come from the spec:
+ * initial mass is dryMass + propellantCapacity, never a literal.
+ */
+export function createShip(spec: ShipSpec): Ship {
+  const prepared = prepare(spec);
+  return {
+    spec,
+    body: createBody({
+      mass: spec.dryMass + spec.propellantCapacity,
+      inertia: new Vector3(...spec.inertia),
+    }),
+    propellant: spec.propellantCapacity,
+    prepared,
+    throttles: new Float32Array(prepared.length),
+  };
 }
 
 /** Total kg/s currently being consumed. Feeds back into mass, which feeds back into acceleration. */

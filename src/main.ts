@@ -2,11 +2,18 @@ import { createRenderer } from './render';
 import { createHud } from './hud';
 import { createWorld, step, STEP, type World } from './sim/world';
 import { emptyCommand, type Command } from './control';
+import { createShip, type ShipSpec } from './sim/ship';
+import skiffSpec from './data/skiff.json';
 
 const renderer = createRenderer();
 const hud = createHud(document.getElementById('hud')!);
-const world: World = createWorld([]);
-const command: Command = emptyCommand(0);
+
+// The Skiff is the only flyable hull for now. Mass and inertia come from the data
+// file via createShip — nothing about the ship is hardcoded here.
+const skiff = createShip(skiffSpec as ShipSpec);
+const world: World = createWorld([skiff]);
+// One throttle slot per thruster on the ship we actually loaded.
+const command: Command = emptyCommand(skiff.prepared.length);
 
 let accumulator = 0;
 let last = performance.now() / 1000;
