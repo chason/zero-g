@@ -60,6 +60,27 @@ export function integrate(body: RigidBody, wrench: Wrench, dt: number, _hasRecen
   body.velocity.addScaledVector(accel, dt);
   // semi-implicit Euler: position uses the NEW velocity
   body.position.addScaledVector(body.velocity, dt);
+
+  // --- angular, all in the BODY frame ---
+  const w = body.angularVelocity;
+  const I = body.inertia;
+  // I * w, componentwise: inertia is stored as the tensor diagonal
+  const Iw = new Vector3(I.x * w.x, I.y * w.y, I.z * w.z);
+  // gyroscopic term w x (I*w) — without it an asymmetric body never wobbles
+  const gyro = w.clone().cross(Iw);
+  const net = wrench.torque.clone().sub(gyro);
+  // I^-1 * net, also componentwise
+  const wdot = new Vector3(net.x / I.x, net.y / I.y, net.z / I.z);
+  w.addScaledVector(wdot, dt);
+
+  // --- orientation: qdot = 0.5 * q * (0, w) ---
+  const q = body.orientation;
+  const qdotX = 0.5 * (q.w * w.x + q.y * w.z - q.z * w.y);
+  const qdotY = 0.5 * (q.w * w.y + q.z * w.x - q.x * w.z);
+  const qdotZ = 0.5 * (q.w * w.z + q.x * w.y - q.y * w.x);
+  const qdotW = 0.5 * (-q.x * w.x - q.y * w.y - q.z * w.z);
+  q.set(q.x + qdotX * dt, q.y + qdotY * dt, q.z + qdotZ * dt, q.w + qdotW * dt);
+  q.normalize();
 }
 
 /**
