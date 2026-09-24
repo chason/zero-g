@@ -54,7 +54,7 @@ export function cloneBody(b: RigidBody): RigidBody {
 /**
  * Advance one body by dt using semi-implicit Euler. Mutates `body`.
  *
- * TODO — implement. The spec is test/body.test.ts. In order:
+ * The spec is test/body.test.ts. In order:
  *   1. linear:  a = (q * force * q^-1) / mass ; v += a*dt ; x += v*dt   (new v, not old)
  *   2. angular: wdot = I^-1 * (torque - w x (I*w))  in the BODY frame
  *               the cross term is the gyroscopic one; it is what makes a tumble wobble
