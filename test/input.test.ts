@@ -3,7 +3,6 @@ import { deadzone, signPow } from '../src/core/math';
 import {
   createKeyboardMouse,
   PULSE_MS,
-  HOLD_MS,
   SPRING_MS,
   STICK_RANGE_PX,
   type EventSourceLike,
@@ -95,36 +94,43 @@ describe('pulse keys', () => {
     expect(samples.slice(PULSE_MS / 10).every((v) => v === 0)).toBe(true);
   });
 
-  it('a press between PULSE_MS and HOLD_MS is still only a pulse', () => {
+  it('a press longer than PULSE_MS is open for the whole press, not just the pulse', () => {
     const h = harness();
-    const { openMs } = runKey(h, 'KeyW', 150, 500, (a) => a.translate.z);
-    expect(openMs).toBe(PULSE_MS);
+    const { openMs, samples } = runKey(h, 'KeyW', 150, 500, (a) => a.translate.z);
+    // PULSE_MS is a MINIMUM, not a cap: the thruster is open while the key is down.
+    expect(openMs).toBe(150);
+    for (let i = 0; i < 150 / 5; i += 1) expect(samples[i]).toBe(1);
+    for (let i = 150 / 5; i < samples.length; i += 1) expect(samples[i]).toBe(0);
   });
 
-  it('a 500 ms hold produces output for the full hold, and stops at release', () => {
+  it('a 500 ms hold produces 500 ms of continuous output, and stops at release', () => {
     const h = harness();
     const { openMs, samples } = runKey(h, 'KeyW', 500, 700, (a) => a.translate.z);
-    // The two rules in the spec pin this down completely. A press shorter than HOLD_MS
-    // fires for exactly PULSE_MS "and no longer", so the thruster must shut at PULSE_MS
-    // while the key is still down — at that instant a 150 ms press and a 500 ms press are
-    // indistinguishable. The hold then latches at HOLD_MS and stays open until release.
-    expect(openMs).toBe(PULSE_MS + (500 - HOLD_MS));
-    // open for the initial pulse
-    for (let i = 0; i < PULSE_MS / 5; i += 1) expect(samples[i]).toBe(1);
-    // shut while the tap/hold discrimination is still undecided
-    for (let i = PULSE_MS / 5; i < HOLD_MS / 5; i += 1) expect(samples[i]).toBe(0);
-    // then continuously open for the rest of the hold, with no further interruption
-    for (let i = HOLD_MS / 5; i < 500 / 5; i += 1) expect(samples[i]).toBe(1);
+    // Open from t=0 until release with NO interruption anywhere in the middle: the old
+    // rules shut the thruster at PULSE_MS and reopened it at HOLD_MS, a 140 ms dead gap
+    // in the middle of a held key (issue #30).
+    expect(openMs).toBe(500);
+    for (let i = 0; i < 500 / 5; i += 1) expect(samples[i]).toBe(1);
     // and shut on release
     for (let i = 500 / 5; i < samples.length; i += 1) expect(samples[i]).toBe(0);
+    // no zero anywhere inside the hold — the dead gap is gone
+    expect(samples.slice(0, 500 / 5).includes(0)).toBe(false);
   });
 
-  it('a hold longer than HOLD_MS lasts as long as the key is down', () => {
+  it('a longer hold lasts as long as the key is down', () => {
     const short = harness();
     const long = harness();
     const a = runKey(short, 'KeyW', 300, 800, (x) => x.translate.z).openMs;
     const b = runKey(long, 'KeyW', 600, 800, (x) => x.translate.z).openMs;
     expect(b - a).toBe(300);
+  });
+
+  it('a tap at exactly PULSE_MS is the same quantum as a shorter one', () => {
+    const h = harness();
+    const short = runKey(h, 'KeyW', 10, 300, (a) => a.translate.z).openMs;
+    const exact = runKey(harness(), 'KeyW', PULSE_MS, 300, (a) => a.translate.z).openMs;
+    expect(short).toBe(PULSE_MS);
+    expect(exact).toBe(PULSE_MS);
   });
 
   it('three identical taps produce three identical impulse durations', () => {
