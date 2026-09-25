@@ -8,7 +8,7 @@ import {
 import { createShip, type ShipSpec, type Ship } from '../src/sim/ship';
 import { emptyCommand } from '../src/control';
 import { summaryFields, freshSummaryFields } from '../src/hud/instruments/summary';
-import { hullStrokes, portStrokes, cylinderStrokes } from '../src/render/vector';
+import { hullStrokes, sectionStrokes, portStrokes, cylinderStrokes } from '../src/render/vector';
 import skiff from '../src/data/skiff.json';
 import capital from '../src/data/capital.json';
 
@@ -198,6 +198,38 @@ describe('the hull blocks the far side', () => {
   });
 });
 
+describe('turning sections', () => {
+  it('the refinery turns at its data rate, nothing else moves, and it freezes with the run', () => {
+    const world = capitalWorld();
+    withShip(world, RING.clone().addScaledVector(OPEN, 100));
+    const s = world.structures[0]!;
+    const i = s.hull.findIndex((h) => h.label === 'refinery');
+    expect(s.hull[i]!.spinDegPerSec).toBe(6);
+    expect(s.spinAngle.every((a) => a === 0)).toBe(true);
+    run(world, 120); // one second
+    expect(s.spinAngle[i]).toBeCloseTo((6 * Math.PI) / 180, 6);
+    s.spinAngle.forEach((a, k) => { if (k !== i) expect(a).toBe(0); });
+    // a turning cylinder is the same cylinder to the strike test
+    const inside = new Vector3(20, 0, 170).applyQuaternion(s.orientation).add(s.position);
+    expect(structureStrike(s, inside, R)).toBe('refinery');
+    // frozen run: the angle stops
+    world.ships[0]!.pilot!.health = 0;
+    run(world, 1);
+    const frozen = s.spinAngle[i]!;
+    run(world, 120);
+    expect(s.spinAngle[i]).toBe(frozen);
+  });
+
+  it('refuses a port on a turning section, loudly', () => {
+    const bad: StructureSpec = {
+      ...cspec,
+      ports: [...cspec.ports, { id: 'R1', position: [38, 0, 170], normal: [1, 0, 0], radius: 3, tube: 0.18, collar: 1.5 }],
+    };
+    const world = createWorld([]);
+    expect(() => placeStructure(world, bad, 'F6', RING, OPEN)).toThrow(/turning section/);
+  });
+});
+
 describe('strokes', () => {
   it('cylinderStrokes runs between the signed z values it is given', () => {
     const out: number[] = [];
@@ -215,6 +247,14 @@ describe('strokes', () => {
     for (let i = 2; i < withCollar.length; i += 3) minZ = Math.min(minZ, withCollar[i]!);
     expect(minZ).toBeCloseTo(-1.5, 6);
   });
+  it('a skipped section is left out of the hull buffer and drawn on its own', () => {
+    const all = hullStrokes(cspec.hull);
+    const without = hullStrokes(cspec.hull, 12, 12, 10, new Set([2]));
+    const alone = sectionStrokes(cspec.hull[2]!);
+    expect(without.length).toBeLessThan(all.length);
+    expect(without.length + alone.length).toBe(all.length);
+  });
+
   it('the capital hull is one buffer along +Z with a sane stroke count', () => {
     const seg = hullStrokes(cspec.hull);
     expect(seg.length % 6).toBe(0);

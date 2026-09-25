@@ -10,6 +10,8 @@ export interface HullSection {
   from: number;
   to: number;
   label?: string;
+  /** degrees per second about the structure's axis; a turning section. Visual only — see spinAngle. */
+  spinDegPerSec?: number;
 }
 
 /** A docking port as it appears in a structure's data file, in the structure's frame. */
@@ -44,6 +46,14 @@ export interface Structure {
   hull: HullSection[];
   /** indices into world.targets of the ports mounted on this structure */
   ports: number[];
+  /**
+   * Current angle of each section about the axis, radians, parallel to `hull`. Only
+   * sections with spinDegPerSec move. A cylinder turning about its own axis is the same
+   * cylinder to the strike test, so this is render state kept by the sim so that it
+   * freezes with the run and is reproducible. Ports on a turning section are refused
+   * by addStructure (#45) until they are made to turn with it.
+   */
+  spinAngle: number[];
 }
 
 /**
@@ -110,6 +120,11 @@ export function addStructure(
   orientation: Quaternion,
   portId?: string,
 ): { structure: number; port: number } {
+  for (const p of spec.ports) {
+    const z = p.position[2];
+    const on = spec.hull.find((h) => z >= h.from && z <= h.to && (h.spinDegPerSec ?? 0) !== 0);
+    if (on) throw new Error(`port ${p.id} sits on turning section "${on.label ?? 'hull'}"; ports on turning sections are not supported yet`);
+  }
   const structureIndex = world.structures.length;
   const structure: Structure = {
     name: spec.name,
@@ -118,6 +133,7 @@ export function addStructure(
     velocity: new Vector3(),
     hull: spec.hull.map((h) => ({ ...h })),
     ports: [],
+    spinAngle: spec.hull.map(() => 0),
   };
   world.structures.push(structure);
 
@@ -574,6 +590,15 @@ export function step(world: World, command: Command, dt: number): void {
       // Peak for the run summary (#26): tracked here rather than in stepPilot, which
       // owns the tolerance dynamics and nothing else.
       if (pilot.gLoad > pilot.peakG) pilot.peakG = pilot.gLoad;
+    }
+  }
+
+  // Turning sections (#45): angle only. A cylinder about its own axis is the same
+  // cylinder to the strike test, so the geometry below does not change.
+  for (const structure of world.structures) {
+    for (let i = 0; i < structure.hull.length; i++) {
+      const rate = structure.hull[i]!.spinDegPerSec;
+      if (rate) structure.spinAngle[i] = (structure.spinAngle[i]! + ((rate * Math.PI) / 180) * dt) % (Math.PI * 2);
     }
   }
 

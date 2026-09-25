@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, asteroidStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { createVectorLines, createVectorStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -82,7 +82,10 @@ export function createRenderer(): Renderer {
   // Ports (#25, #42): one stroke set per target, keyed by the Target object so a
   // replaced list rebuilds only what changed. The assigned port is drawn warm.
   const targetMeshes = new Map<Target, { strokes: VectorStrokes; assigned: boolean }>();
-  const structureMeshes = new Map<Structure, VectorStrokes>();
+  // A structure is one static stroke set plus one per turning section, each in a child
+  // group that rotates about local Z by the sim's spinAngle for it.
+  interface StructureMesh { group: THREE.Group; fixed: VectorStrokes; turning: { index: number; strokes: VectorStrokes }[] }
+  const structureMeshes = new Map<Structure, StructureMesh>();
   const obstacleMeshes = new Map<Obstacle, VectorStrokes>();
 
   function syncTargets(world: World): void {
@@ -105,15 +108,27 @@ export function createRenderer(): Renderer {
     for (const [structure, mesh] of structureMeshes) {
       if (structures.includes(structure)) continue;
       scene.remove(mesh.group);
-      mesh.dispose();
+      mesh.fixed.dispose();
+      for (const t of mesh.turning) t.strokes.dispose();
       structureMeshes.delete(structure);
     }
     for (const structure of structures) {
       if (structureMeshes.has(structure)) continue;
-      const strokes = createVectorStrokes(hullStrokes(structure.hull), HULL_COLOR);
-      strokes.setFade(HULL_FADE);
-      scene.add(strokes.group);
-      structureMeshes.set(structure, strokes);
+      const turningIdx = new Set<number>();
+      structure.hull.forEach((h, i) => { if (h.spinDegPerSec) turningIdx.add(i); });
+      const group = new THREE.Group();
+      const fixed = createVectorStrokes(hullStrokes(structure.hull, 12, 12, 10, turningIdx), HULL_COLOR);
+      fixed.setFade(HULL_FADE);
+      group.add(fixed.group);
+      const turning: StructureMesh['turning'] = [];
+      for (const index of turningIdx) {
+        const strokes = createVectorStrokes(sectionStrokes(structure.hull[index]!), HULL_COLOR);
+        strokes.setFade(HULL_FADE);
+        group.add(strokes.group);
+        turning.push({ index, strokes });
+      }
+      scene.add(group);
+      structureMeshes.set(structure, { group, fixed, turning });
     }
     const { obstacles } = world;
     for (const [obstacle, mesh] of obstacleMeshes) {
@@ -229,6 +244,7 @@ export function createRenderer(): Renderer {
       const mesh = structureMeshes.get(structure)!;
       mesh.group.position.copy(structure.position as unknown as THREE.Vector3);
       mesh.group.quaternion.copy(structure.orientation as unknown as THREE.Quaternion);
+      for (const t of mesh.turning) t.strokes.group.rotation.z = structure.spinAngle[t.index]!;
     }
     for (const obstacle of world.obstacles) {
       const mesh = obstacleMeshes.get(obstacle)!;

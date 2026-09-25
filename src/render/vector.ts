@@ -241,19 +241,34 @@ export function cylinderStrokes(
   }
 }
 
+/** One hull section on its own, for a section that turns independently of the rest. */
+export function sectionStrokes(
+  section: { radius: number; from: number; to: number },
+  longitudes = 12,
+  hoopSpacing = 10,
+): Float32Array {
+  const out: number[] = [];
+  cylinderStrokes(section.radius, section.from, section.to, out, longitudes, hoopSpacing, 36);
+  return new Float32Array(out);
+}
+
 /**
  * A structure's hull: each section a cylinder along local +Z, and where the radius
  * steps between sections, spokes joining the two rims so the silhouette closes. Big
- * hulls get sparser hoops so the stroke count stays sane.
+ * hulls get sparser hoops so the stroke count stays sane. Sections listed in `skip`
+ * are left out (they are drawn separately so they can turn), their spokes kept.
  */
 export function hullStrokes(
   sections: ReadonlyArray<{ radius: number; from: number; to: number }>,
   spokes = 12,
   longitudes = 12,
   hoopSpacing = 10,
+  skip: ReadonlySet<number> = new Set(),
 ): Float32Array {
   const out: number[] = [];
-  for (const sec of sections) cylinderStrokes(sec.radius, sec.from, sec.to, out, longitudes, hoopSpacing, 36);
+  sections.forEach((sec, i) => {
+    if (!skip.has(i)) cylinderStrokes(sec.radius, sec.from, sec.to, out, longitudes, hoopSpacing, 36);
+  });
   for (let i = 0; i + 1 < sections.length; i++) {
     const a = sections[i]!;
     const b = sections[i + 1]!;
