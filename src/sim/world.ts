@@ -168,6 +168,8 @@ export interface Obstacle {
   position: Vector3;
   radius: number;
   orientation: Quaternion;
+  /** angular velocity, world frame, rad/s: axis is the axis, length is the rate. Slow. */
+  spin: Vector3;
   seed: number;
 }
 
@@ -382,6 +384,8 @@ const framePort = { axial: 0, radial: 0 };
 
 const scratchLocal = new Vector3();
 const scratchZero = new Vector3();
+const scratchSpin = new Quaternion();
+const scratchAxis = new Vector3();
 const scratchInv = new Quaternion();
 
 /**
@@ -591,6 +595,14 @@ export function step(world: World, command: Command, dt: number): void {
       // owns the tolerance dynamics and nothing else.
       if (pilot.gLoad > pilot.peakG) pilot.peakG = pilot.gLoad;
     }
+  }
+
+  // Tumbling rocks (#46): orientation only. A sphere is a sphere however it turns.
+  for (const rock of world.obstacles) {
+    const rate = rock.spin.length();
+    if (rate === 0) continue;
+    scratchSpin.setFromAxisAngle(scratchAxis.copy(rock.spin).divideScalar(rate), rate * dt);
+    rock.orientation.premultiply(scratchSpin).normalize();
   }
 
   // Turning sections (#45): angle only. A cylinder about its own axis is the same

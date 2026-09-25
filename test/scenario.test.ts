@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Vector3 } from '../src/core/math';
 import {
   generateScenario, applyScenario, rng, noseToward,
-  START_RANGE, START_CONE_DEG, ASTEROID_COUNT, ASTEROID_RADIUS, START_CLEARANCE, PORT_CLEARANCE,
+  START_RANGE, START_CONE_DEG, ASTEROID_COUNT, ASTEROID_RADIUS, START_CLEARANCE, PORT_CLEARANCE, ROCK_SPIN_DEG,
 } from '../src/sim/scenario';
 import { createWorld, resetRun, step, STEP, structureStrike, obstacleStrike, type StructureSpec } from '../src/sim/world';
 import { createShip, type ShipSpec } from '../src/sim/ship';
@@ -138,6 +138,56 @@ describe('generateScenario', () => {
     expect(world.targets.length).toBe(targetsBefore);
     expect(world.obstacles.length).toBe(ASTEROID_COUNT);
     expect(world.outcome).toBeNull();
+  });
+});
+
+describe('rocks tumble', () => {
+  it('each rock turns slowly about its own axis, and the field is never in sync', () => {
+    const world = createWorld([]);
+    const ship = createShip(spec);
+    world.ships.push(ship);
+    applyScenario(world, cspec, generateScenario(cspec, 11), ship);
+    const rocks = world.obstacles;
+    const rates = rocks.map((o) => (o.spin.length() * 180) / Math.PI);
+    for (const r of rates) {
+      expect(r).toBeGreaterThanOrEqual(ROCK_SPIN_DEG[0] - 1e-9);
+      expect(r).toBeLessThanOrEqual(ROCK_SPIN_DEG[1] + 1e-9);
+    }
+    // axes differ: the largest pairwise alignment among the first ten is well short of parallel
+    let maxAlign = 0;
+    for (let i = 0; i < 10; i++) for (let j = i + 1; j < 10; j++) {
+      maxAlign = Math.max(maxAlign, Math.abs(rocks[i]!.spin.clone().normalize().dot(rocks[j]!.spin.clone().normalize())));
+    }
+    expect(maxAlign).toBeLessThan(0.99);
+
+    const before = rocks.map((o) => o.orientation.clone());
+    const cmd = emptyCommand(ship.prepared.length);
+    for (let i = 0; i < 120; i++) step(world, cmd, STEP); // one second
+    rocks.forEach((o, i) => {
+      // rotated by exactly its rate about its axis: the angle between the two orientations
+      const angle = 2 * Math.acos(Math.min(1, Math.abs(before[i]!.dot(o.orientation))));
+      expect(angle).toBeCloseTo(o.spin.length(), 5);
+      // and the axis is preserved: the world-frame delta (new * old^-1) leaves its own
+      // spin vector where it was. three applies quaternions innermost-first, so old^-1
+      // goes on first and new second.
+      const axis = o.spin.clone().normalize();
+      const rotated = axis.clone().applyQuaternion(before[i]!.clone().invert()).applyQuaternion(o.orientation);
+      expect(rotated.distanceTo(axis)).toBeLessThan(1e-6);
+      expect(o.orientation.length()).toBeCloseTo(1, 9);
+    });
+  });
+
+  it('stops turning when the run ends', () => {
+    const world = createWorld([]);
+    const ship = createShip(spec);
+    world.ships.push(ship);
+    applyScenario(world, cspec, generateScenario(cspec, 11), ship);
+    ship.pilot!.health = 0;
+    const cmd = emptyCommand(ship.prepared.length);
+    step(world, cmd, STEP);
+    const frozen = world.obstacles[0]!.orientation.clone();
+    for (let i = 0; i < 120; i++) step(world, cmd, STEP);
+    expect(world.obstacles[0]!.orientation.equals(frozen)).toBe(true);
   });
 });
 

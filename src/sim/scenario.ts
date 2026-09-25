@@ -21,6 +21,8 @@ export const FIELD_RADIUS = 320;
 export const START_CLEARANCE = 40;
 /** No rock this close to any ring, so every port stays enterable. */
 export const PORT_CLEARANCE = 14;
+/** Rock tumble rate, degrees per second: slow enough to be scenery, fast enough to notice. */
+export const ROCK_SPIN_DEG: readonly [number, number] = [1.5, 5];
 
 export interface Scenario {
   seed: number;
@@ -111,7 +113,10 @@ export function generateScenario(spec: StructureSpec, seed: number): Scenario {
     if (structureStrike(structure, p, radius + 6) !== null) continue;
     if (obstacles.some((o) => p.distanceTo(o.position) < o.radius + radius + 4)) continue;
     const orientation = new Quaternion().setFromAxisAngle(randomUnit(next, new Vector3()), next() * Math.PI * 2);
-    obstacles.push({ name: 'asteroid', position: p, radius, orientation, seed: Math.floor(next() * 0x7fffffff) });
+    // every rock its own axis and rate, so the field never turns in step
+    const rate = ((ROCK_SPIN_DEG[0] + next() * (ROCK_SPIN_DEG[1] - ROCK_SPIN_DEG[0])) * Math.PI) / 180;
+    const spin = randomUnit(next, new Vector3()).multiplyScalar(rate);
+    obstacles.push({ name: 'asteroid', position: p, radius, orientation, spin, seed: Math.floor(next() * 0x7fffffff) });
   }
 
   return { seed, structurePosition, structureOrientation, assignedPortId: best.id, shipPosition, shipOrientation, obstacles };
