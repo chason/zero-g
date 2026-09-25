@@ -1,0 +1,9 @@
+{
+  "name": "tender",
+  "ring": { "radius": 3, "tube": 0.18 },
+  "hull": [
+    { "radius": 2.2, "from": 0.6,  "to": 9,  "label": "neck" },
+    { "radius": 4.6, "from": 9,    "to": 25, "label": "body" },
+    { "radius": 2.6, "from": 25,   "to": 33, "label": "tail" }
+  ]
+}

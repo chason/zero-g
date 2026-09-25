@@ -4,15 +4,58 @@ import { stepPilot } from './pilot';
 import { Vector3, G0 } from '../core/math';
 import type { Command } from '../control';
 
-/** Something the HUD can point at and the pilot can dock with. main.ts places the ring (#25). */
+/** One cylindrical section of a target's hull, measured along its axis behind the ring plane. */
+export interface HullSection {
+  radius: number;
+  /** metres behind the ring plane where the section starts */
+  from: number;
+  /** metres behind the ring plane where it ends */
+  to: number;
+  label?: string;
+}
+
+/**
+ * Something the HUD can point at and the pilot can dock with: a docking ring on the
+ * nose of a hull. The ring has a back — the hull is behind it — so it can only be
+ * entered from the open side, and that is enforced by geometry, not by a rule. #41.
+ */
 export interface Target {
   name: string;
-  /** world frame, metres */
+  /** world frame, metres: the centre of the ring */
   position: Vector3;
-  /** world frame, m/s — zero for a static ring */
+  /** world frame, m/s — zero for a static target */
   velocity: Vector3;
-  /** metres; contact when the ship's docking port is within this of position */
+  /** unit vector, world frame, pointing OUT of the ring toward the open side */
+  axis: Vector3;
+  /** ring radius, metres; a port inside this (less the tube) is through the hoop */
   radius: number;
+  /** ring tube radius, metres; the hoop itself is solid */
+  tube: number;
+  /** cylinders behind the ring plane, along -axis */
+  hull: HullSection[];
+}
+
+/** How the run ended in contact: through the ring, or into something solid. */
+export type ContactKind = 'ring' | 'hull';
+
+/** A dockable ship as it appears in a data file: a ring and the hull behind it. */
+export interface TenderSpec {
+  name: string;
+  ring: { radius: number; tube: number };
+  hull: HullSection[];
+}
+
+/** Place a tender at `position` with its ring facing `axis` (the open side). */
+export function createTarget(spec: TenderSpec, position: Vector3, axis: Vector3, velocity = new Vector3()): Target {
+  return {
+    name: spec.name,
+    position: position.clone(),
+    velocity: velocity.clone(),
+    axis: axis.clone().normalize(),
+    radius: spec.ring.radius,
+    tube: spec.ring.tube,
+    hull: spec.hull.map((h) => ({ ...h })),
+  };
 }
 
 /**
@@ -25,6 +68,10 @@ export interface Target {
 export interface Contact {
   /** index into world.targets */
   targetIndex: number;
+  /** 'ring' = the port passed the ring plane inside the hoop; 'hull' = a solid strike */
+  kind: ContactKind;
+  /** for 'hull': which section (or 'ring' for the hoop itself) */
+  struck?: string;
   /** |ship.velocity - target.velocity| at contact, m/s */
   relativeSpeed: number;
   /** |body.angularVelocity| at contact, in deg/s — the HUD's unit, so the two agree */
@@ -51,6 +98,8 @@ export interface RunSummary {
   contactSpeed?: number;
   /** deg/s at contact; only for 'dock' and 'crash' */
   contactRotation?: number;
+  /** for a crash into something solid: what was hit */
+  struck?: string;
 }
 
 export interface World {
@@ -183,23 +232,94 @@ const scratchRelVel = new Vector3();
  * Does nothing once a contact exists: the first contact is the one the run is judged on.
  * Allocation-free; one squared distance per ship x target on the no-contact path.
  */
+/** Hull radius to use for a ship whose spec does not give one. */
+const DEFAULT_HULL_RADIUS = 2.5;
+/** The port must be this far inside the hoop's inner edge to count as through it. */
+export const RING_CLEARANCE = 0.2;
+/** The port counts as at the ring plane within this axial distance of it. */
+export const RING_PLANE_TOLERANCE = 0.5;
+
+const scratchRel = new Vector3();
+
+/**
+ * Position `p` in a target's frame: `axial` is metres BEHIND the ring plane (negative on
+ * the open side), `radial` is distance from the axis. Writes nothing; returns via out.
+ */
+export function targetFrame(target: Target, p: Vector3, out: { axial: number; radial: number }): void {
+  scratchRel.copy(p).sub(target.position);
+  const along = scratchRel.dot(target.axis);
+  out.axial = -along;
+  scratchRel.addScaledVector(target.axis, -along);
+  out.radial = scratchRel.length();
+}
+
+const frameCom = { axial: 0, radial: 0 };
+const framePort = { axial: 0, radial: 0 };
+
+/**
+ * A solid strike against the target: the ship's hull sphere overlapping a hull section
+ * or the ring's tube. Returns what was struck, or null.
+ */
+export function hullStrike(target: Target, com: Vector3, shipRadius: number): string | null {
+  targetFrame(target, com, frameCom);
+  const { axial, radial } = frameCom;
+  // the hoop itself: a ring of tube radius at ring radius, in the ring plane
+  if (Math.abs(axial) <= shipRadius + target.tube) {
+    const inPlane = Math.abs(radial - target.radius);
+    if (inPlane <= target.tube + shipRadius) return 'ring';
+  }
+  for (const section of target.hull) {
+    if (axial < section.from - shipRadius || axial > section.to + shipRadius) continue;
+    if (radial <= section.radius + shipRadius) return section.label ?? 'hull';
+  }
+  return null;
+}
+
+/**
+ * The port through the hoop: at the ring plane, inside the hoop with clearance, and
+ * the ship on the open side — which nose-first approach guarantees, since the port
+ * leads the centre of mass; a backwards ship has already struck the neck.
+ */
+export function throughRing(target: Target, port: Vector3, com: Vector3): boolean {
+  targetFrame(target, port, framePort);
+  if (Math.abs(framePort.axial) > RING_PLANE_TOLERANCE) return false;
+  if (framePort.radial > target.radius - target.tube - RING_CLEARANCE) return false;
+  targetFrame(target, com, frameCom);
+  return frameCom.axial < 0;
+}
+
+function recordContact(world: World, ship: Ship, target: Target, j: number, kind: ContactKind, struck?: string): void {
+  scratchRelVel.copy(ship.body.velocity).sub(target.velocity);
+  world.contact = {
+    targetIndex: j,
+    kind,
+    ...(struck !== undefined ? { struck } : {}),
+    relativeSpeed: scratchRelVel.length(),
+    residualRotationDegPerSec: ship.body.angularVelocity.length() * RAD_TO_DEG,
+    time: world.time,
+  };
+}
+
 function detectContact(world: World): void {
   if (world.contact !== null) return;
   const { ships, targets } = world;
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i]!;
+    const shipRadius = ship.spec.hullRadius ?? DEFAULT_HULL_RADIUS;
     dockingPortPosition(ship, scratchPort);
     for (let j = 0; j < targets.length; j++) {
       const target = targets[j]!;
-      if (scratchPort.distanceToSquared(target.position) > target.radius * target.radius) continue;
-      scratchRelVel.copy(ship.body.velocity).sub(target.velocity);
-      world.contact = {
-        targetIndex: j,
-        relativeSpeed: scratchRelVel.length(),
-        residualRotationDegPerSec: ship.body.angularVelocity.length() * RAD_TO_DEG,
-        time: world.time,
-      };
-      return;
+      // A strike is judged before the ring so that clipping the hoop on the way in
+      // is a crash, not a dock.
+      const struck = hullStrike(target, ship.body.position, shipRadius);
+      if (struck !== null) {
+        recordContact(world, ship, target, j, 'hull', struck);
+        return;
+      }
+      if (throughRing(target, scratchPort, ship.body.position)) {
+        recordContact(world, ship, target, j, 'ring');
+        return;
+      }
     }
   }
 }
@@ -221,6 +341,7 @@ function resolveOutcome(world: World): void {
   const { contact } = world;
   if (contact !== null) {
     const clean =
+      contact.kind === 'ring' &&
       contact.relativeSpeed <= DOCK_MAX_SPEED &&
       contact.residualRotationDegPerSec <= DOCK_MAX_ROTATION_DEG_PER_SEC;
     endRun(world, clean ? 'dock' : 'crash', contact);
@@ -244,6 +365,7 @@ function endRun(world: World, outcome: RunOutcome, contact: Contact | null): voi
   if (contact !== null) {
     summary.contactSpeed = contact.relativeSpeed;
     summary.contactRotation = contact.residualRotationDegPerSec;
+    if (contact.kind === 'hull') summary.struck = contact.struck ?? 'hull';
   }
   world.outcome = outcome;
   world.summary = summary;

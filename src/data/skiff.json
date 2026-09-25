@@ -4,6 +4,7 @@
   "inertia": [9000, 9000, 2400],
   "seatOffset": [0, 0.4, -2.0],
   "dockingPort": [0, 0, -2.6],
+  "hullRadius": 2.6,
   "propellantCapacity": 900,
   "thrusters": [
     { "id": "main",            "position": [0, 0, 2.4],           "direction": [0, 0, -1],    "thrust": 40000, "isp": 320 },

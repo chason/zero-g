@@ -30,6 +30,8 @@ export interface ShipSpec {
    * the same reason as the thruster geometry — a refit that moves it must not need code.
    */
   dockingPort: [number, number, number];
+  /** metres; the hull as a sphere about the centre of mass, for collision with a target's hull */
+  hullRadius?: number;
   /** kg of propellant in the tanks when full */
   propellantCapacity: number;
   thrusters: ThrusterSpec[];
