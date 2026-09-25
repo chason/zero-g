@@ -412,7 +412,7 @@ describe('run summary figures (#26)', () => {
 
   it('peakG is at least every g the pilot felt, and exactly the largest', () => {
     // A 2 rad/s ROLL keeps the port and the main engine on the spin axis, so the ship
-    // still arrives, while the seat's 0.4 m offset from that axis feels a steady ~0.16 g.
+    // still arrives, while the seat's offset from that axis feels a steady fraction of a g.
     // A short main burn on top of it makes the peak an earlier, larger figure than the
     // value at contact, so the test tells a running maximum from a final reading.
     const { world, ship } = approach(20, 0, new Vector3(0, 0, 2));

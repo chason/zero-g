@@ -17,6 +17,16 @@ export const COCKPIT_COLOR = 0x7a8a8c;
 export const COCKPIT_FADE = 0.32;
 /** The dash solid sits this factor farther from the eye than its strokes, so they stay on top. */
 export const DASH_SETBACK = 1.01;
+/**
+ * The frame is laid out at about a metre and then drawn at this fraction of that. A scale
+ * about the eye changes nothing on screen, but it puts the dash NEARER than anything on
+ * the hull — the forward thruster nozzles are 0.4 m ahead of the seat — so their exhaust
+ * is behind the dash where the dash covers it, instead of flaring in front of it (#52).
+ * Still well past the camera's 0.1 m near plane.
+ */
+export const COCKPIT_SCALE = 0.3;
+/** Nearest and farthest the dash solid reaches from the eye, in metres, after scaling. */
+export const DASH_DEPTH: readonly [number, number] = [0.78 * COCKPIT_SCALE, 1.2 * COCKPIT_SCALE];
 /** No stroke passes within this of the view axis, as a tangent (0.25 ≈ 14°). */
 export const CLEAR_TAN = 0.25;
 
@@ -111,5 +121,6 @@ export function createCockpit(): { group: THREE.Group; strokes: VectorStrokes } 
   const strokes = createVectorStrokes(cockpitStrokes(), COCKPIT_COLOR);
   strokes.setOccluder(dashGeometry());
   strokes.setFade(COCKPIT_FADE);
+  strokes.group.scale.setScalar(COCKPIT_SCALE);
   return { group: strokes.group, strokes };
 }
