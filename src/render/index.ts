@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, sphereStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, asteroidStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -124,7 +124,7 @@ export function createRenderer(): Renderer {
     }
     for (const obstacle of obstacles) {
       if (obstacleMeshes.has(obstacle)) continue;
-      const strokes = createVectorStrokes(sphereStrokes(obstacle.radius), ROCK_COLOR);
+      const strokes = createVectorStrokes(asteroidStrokes(obstacle.radius, obstacle.seed), ROCK_COLOR);
       strokes.group.position.copy(obstacle.position as unknown as THREE.Vector3);
       strokes.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
       scene.add(strokes.group);

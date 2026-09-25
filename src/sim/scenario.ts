@@ -1,4 +1,5 @@
 import { Vector3, Quaternion, Matrix4 } from '../core/math';
+import { rng } from '../core/random';
 import { addStructure, createWorld, structureStrike, type World, type StructureSpec, type Obstacle } from './world';
 import type { Ship } from './ship';
 
@@ -31,17 +32,7 @@ export interface Scenario {
   obstacles: Obstacle[];
 }
 
-/** mulberry32: small, fast, and good enough for scattering rocks. Returns [0, 1). */
-export function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+export { rng };
 
 function randomUnit(next: () => number, out: Vector3): Vector3 {
   const z = next() * 2 - 1;
@@ -120,7 +111,7 @@ export function generateScenario(spec: StructureSpec, seed: number): Scenario {
     if (structureStrike(structure, p, radius + 6) !== null) continue;
     if (obstacles.some((o) => p.distanceTo(o.position) < o.radius + radius + 4)) continue;
     const orientation = new Quaternion().setFromAxisAngle(randomUnit(next, new Vector3()), next() * Math.PI * 2);
-    obstacles.push({ name: 'asteroid', position: p, radius, orientation });
+    obstacles.push({ name: 'asteroid', position: p, radius, orientation, seed: Math.floor(next() * 0x7fffffff) });
   }
 
   return { seed, structurePosition, structureOrientation, assignedPortId: best.id, shipPosition, shipOrientation, obstacles };
