@@ -9,8 +9,10 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
  * A real vector display draws a bright thin stroke that the phosphor spreads into a
  * halo. WebGL's built-in lines are one device pixel wide and cannot be widened, so the
  * stroke is drawn with the "fat line" addon (a screen-space quad per segment, width in
- * CSS pixels) and the halo comes from the bloom stage in post.ts. Additive blending so
- * crossings get brighter rather than occluding, as beams on a CRT do.
+ * CSS pixels) and the halo comes from the bloom stage in post.ts. Normal blending, not
+ * additive: additive is the more literal CRT model, but a ring 400 m away collapses its
+ * few hundred segments into a five-pixel disc, and the sum blooms into a blob that
+ * swallows the target bracket. Bloom on a capped stroke gives the halo without that.
  *
  * Only silhouette and crease edges are drawn (EdgesGeometry), not triangle wireframes:
  * a cone is twelve spokes and a rim, not a fan of diagonals. Issue #36.
@@ -51,7 +53,7 @@ export function createVectorLines(
     linewidth: STROKE_PX,
     worldUnits: false,
     transparent: true,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     depthWrite: false,
   });
   material.resolution.copy(resolution);
@@ -112,7 +114,7 @@ export function createVectorStrokes(segments: Float32Array, color: THREE.ColorRe
     linewidth: STROKE_PX,
     worldUnits: false,
     transparent: true,
-    blending: THREE.AdditiveBlending,
+    blending: THREE.NormalBlending,
     depthWrite: false,
   });
   material.resolution.copy(resolution);

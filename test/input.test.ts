@@ -82,7 +82,7 @@ function runKey(
 describe('pulse keys', () => {
   it('a 10 ms tap still fires for exactly PULSE_MS', () => {
     const h = harness();
-    const { openMs } = runKey(h, 'KeyW', 10, 400, (a) => a.translate.z);
+    const { openMs } = runKey(h, 'KeyW', 10, 400, (a) => Math.abs(a.translate.z));
     expect(openMs).toBe(PULSE_MS);
   });
 
@@ -96,7 +96,7 @@ describe('pulse keys', () => {
 
   it('a press longer than PULSE_MS is open for the whole press, not just the pulse', () => {
     const h = harness();
-    const { openMs, samples } = runKey(h, 'KeyW', 150, 500, (a) => a.translate.z);
+    const { openMs, samples } = runKey(h, 'KeyW', 150, 500, (a) => Math.abs(a.translate.z));
     // PULSE_MS is a MINIMUM, not a cap: the thruster is open while the key is down.
     expect(openMs).toBe(150);
     for (let i = 0; i < 150 / 5; i += 1) expect(samples[i]).toBe(1);
@@ -105,7 +105,7 @@ describe('pulse keys', () => {
 
   it('a 500 ms hold produces 500 ms of continuous output, and stops at release', () => {
     const h = harness();
-    const { openMs, samples } = runKey(h, 'KeyW', 500, 700, (a) => a.translate.z);
+    const { openMs, samples } = runKey(h, 'KeyW', 500, 700, (a) => Math.abs(a.translate.z));
     // Open from t=0 until release with NO interruption anywhere in the middle: the old
     // rules shut the thruster at PULSE_MS and reopened it at HOLD_MS, a 140 ms dead gap
     // in the middle of a held key (issue #30).
@@ -120,15 +120,15 @@ describe('pulse keys', () => {
   it('a longer hold lasts as long as the key is down', () => {
     const short = harness();
     const long = harness();
-    const a = runKey(short, 'KeyW', 300, 800, (x) => x.translate.z).openMs;
-    const b = runKey(long, 'KeyW', 600, 800, (x) => x.translate.z).openMs;
+    const a = runKey(short, 'KeyW', 300, 800, (x) => Math.abs(x.translate.z)).openMs;
+    const b = runKey(long, 'KeyW', 600, 800, (x) => Math.abs(x.translate.z)).openMs;
     expect(b - a).toBe(300);
   });
 
   it('a tap at exactly PULSE_MS is the same quantum as a shorter one', () => {
     const h = harness();
-    const short = runKey(h, 'KeyW', 10, 300, (a) => a.translate.z).openMs;
-    const exact = runKey(harness(), 'KeyW', PULSE_MS, 300, (a) => a.translate.z).openMs;
+    const short = runKey(h, 'KeyW', 10, 300, (a) => Math.abs(a.translate.z)).openMs;
+    const exact = runKey(harness(), 'KeyW', PULSE_MS, 300, (a) => Math.abs(a.translate.z)).openMs;
     expect(short).toBe(PULSE_MS);
     expect(exact).toBe(PULSE_MS);
   });
@@ -144,14 +144,14 @@ describe('pulse keys', () => {
 
   it('binds W/S, A/D, R/F to translation and Q/E to roll, with opposed signs', () => {
     const cases: Array<[string, 'translate' | 'rotate', 'x' | 'y' | 'z', number]> = [
-      ['KeyW', 'translate', 'z', 1],
-      ['KeyS', 'translate', 'z', -1],
+      ['KeyW', 'translate', 'z', -1], // nose is -Z
+      ['KeyS', 'translate', 'z', 1],
       ['KeyD', 'translate', 'x', 1],
       ['KeyA', 'translate', 'x', -1],
       ['KeyR', 'translate', 'y', 1],
       ['KeyF', 'translate', 'y', -1],
-      ['KeyE', 'rotate', 'z', 1],
-      ['KeyQ', 'rotate', 'z', -1],
+      ['KeyE', 'rotate', 'z', -1], // roll right = about the nose axis, -Z
+      ['KeyQ', 'rotate', 'z', 1],
     ];
     for (const [code, channel, axis, sign] of cases) {
       const h = harness();
@@ -189,9 +189,10 @@ describe('pulse keys', () => {
 describe('virtual stick', () => {
   it('maps mouse X to yaw and mouse Y to pitch, and nothing to translation', () => {
     const h = harness();
+    // stick right = yaw right = nose to +X = rotation about -Y, so a NEGATIVE demand
     h.mouse.emit('mousemove', { movementX: STICK_RANGE_PX, movementY: 0 });
     let axes = h.device.sample(0);
-    expect(axes.rotate.y).toBeGreaterThan(0);
+    expect(axes.rotate.y).toBeLessThan(0);
     expect(axes.rotate.x).toBe(0);
     expect(axes.translate.x).toBe(0);
     expect(axes.translate.y).toBe(0);
@@ -216,9 +217,10 @@ describe('virtual stick', () => {
   it('shapes each axis with deadzone then signPow, with a settable exponent', () => {
     const h = harness();
     h.mouse.emit('mousemove', { movementX: 0.5 * STICK_RANGE_PX, movementY: 0 });
-    expect(h.device.sample(0).rotate.y).toBeCloseTo(signPow(deadzone(0.5, 0.05), 2), 10);
+    // negated: stick right is a yaw-right demand, which is rotation about -Y
+    expect(h.device.sample(0).rotate.y).toBeCloseTo(-signPow(deadzone(0.5, 0.05), 2), 10);
     h.device.exponent = 3;
-    expect(h.device.sample(0).rotate.y).toBeCloseTo(signPow(deadzone(0.5, 0.05), 3), 10);
+    expect(h.device.sample(0).rotate.y).toBeCloseTo(-signPow(deadzone(0.5, 0.05), 3), 10);
   });
 
   it('rejects deflection inside the 5% deadzone', () => {
@@ -230,7 +232,7 @@ describe('virtual stick', () => {
   it('returns to zero after SPRING_MS of no input', () => {
     const h = harness();
     h.mouse.emit('mousemove', { movementX: STICK_RANGE_PX, movementY: STICK_RANGE_PX });
-    expect(h.device.sample(0).rotate.y).toBeGreaterThan(0);
+    expect(h.device.sample(0).rotate.y).toBeLessThan(0);
 
     const step = 0.01; // 10 ms frames
     let elapsed = 0;
