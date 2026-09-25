@@ -8,11 +8,12 @@
       html, body { margin: 0; height: 100%; background: #05060a; overflow: hidden; }
       canvas { display: block; }
       #hud {
-        position: fixed; inset: 0; pointer-events: none;
+        position: fixed; inset: 0; pointer-events: none; overflow: hidden;
         font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
         color: #7fd4c1; text-shadow: 0 0 6px rgba(0,0,0,.9);
-        padding: 16px; white-space: pre;
       }
+      /* each instrument owns one .inst and positions itself inside the layer */
+      #hud .inst { position: absolute; white-space: pre; }
     </style>
   </head>
   <body>

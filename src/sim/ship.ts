@@ -39,8 +39,27 @@ export interface PreparedThruster {
   massFlow: number;
 }
 
+/**
+ * The pilot's tolerance state. Issue #23 owns the dynamics; #24 and #26 read it.
+ * reserve is what the player watches; health only falls once it empties.
+ */
+export interface Pilot {
+  /** 0..1, drains above the safe g threshold, refills below it */
+  reserve: number;
+  /** 0..1, falls only at zero reserve */
+  health: number;
+  /** current felt acceleration at the seat, in g */
+  gLoad: number;
+}
+
+export function createPilot(): Pilot {
+  return { reserve: 1, health: 1, gLoad: 0 };
+}
+
 export interface Ship {
   spec: ShipSpec;
+  /** optional so hand-built test fixtures still typecheck; createShip always sets it */
+  pilot?: Pilot;
   body: RigidBody;
   /** kg remaining */
   propellant: number;
@@ -133,6 +152,7 @@ export function createShip(spec: ShipSpec): Ship {
     propellant: spec.propellantCapacity,
     prepared,
     throttles: new Float32Array(prepared.length),
+    pilot: createPilot(),
   };
 }
 

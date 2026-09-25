@@ -3,8 +3,23 @@ import { integrate, type Wrench } from './body';
 import { Vector3 } from '../core/math';
 import type { Command } from '../control';
 
+/** Something the HUD can point at and the pilot can dock with. #25 supplies the real one. */
+export interface Target {
+  name: string;
+  /** world frame, metres */
+  position: Vector3;
+  /** world frame, m/s — zero for a static ring */
+  velocity: Vector3;
+  /** metres; contact when the ship's docking port is within this of position */
+  radius: number;
+}
+
 export interface World {
   ships: Ship[];
+  /** all selectable targets; Tab cycles (#21) */
+  targets: Target[];
+  /** index into targets, or -1 for none */
+  selected: number;
   /** simulated seconds since start */
   time: number;
 }
@@ -13,7 +28,7 @@ export interface World {
 export const STEP = 1 / 120;
 
 export function createWorld(ships: Ship[] = []): World {
-  return { ships, time: 0 };
+  return { ships, targets: [], selected: -1, time: 0 };
 }
 
 /** Scratch wrench, reused every tick so the hot path allocates nothing. */

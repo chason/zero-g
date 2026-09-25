@@ -5,14 +5,19 @@ import { emptyCommand, resolve, type Command } from './control';
 import { createKeyboardMouse } from './input';
 import { createShip, type ShipSpec } from './sim/ship';
 import skiffSpec from './data/skiff.json';
+import { Vector3 } from './core/math';
 
 const renderer = createRenderer();
-const hud = createHud(document.getElementById('hud')!);
+const hud = createHud(document.getElementById('hud')!, renderer.camera);
 
 // The Skiff is the only flyable hull for now. Mass and inertia come from the data
 // file via createShip — nothing about the ship is hardcoded here.
 const skiff = createShip(skiffSpec as ShipSpec);
 const world: World = createWorld([skiff]);
+// Placeholder so the HUD has something to point at while #25 builds the real ring.
+// 400 m dead ahead, stationary. #25 replaces this; nothing else should depend on it.
+world.targets.push({ name: 'ring', position: new Vector3(0, 0, -400), velocity: new Vector3(), radius: 3 });
+world.selected = 0;
 // One throttle slot per thruster on the ship we actually loaded. Reused every frame:
 // resolve() writes into it in place, so the flight loop allocates nothing.
 const command: Command = emptyCommand(skiff.prepared.length);

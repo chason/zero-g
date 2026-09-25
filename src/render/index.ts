@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { World } from '../sim/world';
+import { createPlumes } from './plumes';
+import { createPostProcess } from './post';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -10,6 +12,8 @@ export interface Renderer {
   draw(world: World, alpha: number): void;
   resize(): void;
   canvas: HTMLCanvasElement;
+  /** read-only: the HUD projects world points through this */
+  camera: THREE.PerspectiveCamera;
 }
 
 /** Dust is the only real speed cue in empty space. It wraps around the camera forever. */
@@ -32,6 +36,8 @@ export function createRenderer(): Renderer {
   );
   ship.geometry.rotateX(-Math.PI / 2);
   scene.add(ship);
+  const plumes = createPlumes(scene, ship);
+  const post = createPostProcess(renderer);
 
   // Local parallax field: the single most effective speed cue in the whole renderer.
   const dustPos = new Float32Array(DUST_COUNT * 3);
@@ -75,16 +81,17 @@ export function createRenderer(): Renderer {
         Math.floor(camera.position.z / DUST_BOX) * DUST_BOX,
       );
     }
-    // TODO: thruster plumes, driven by ship.throttles
-    renderer.render(scene, camera);
+    if (s) plumes.update(s);
+    post.render(scene, camera, world);
   }
 
   function resize() {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    post.resize();
   }
 
   addEventListener('resize', resize);
-  return { draw, resize, canvas: renderer.domElement };
+  return { draw, resize, canvas: renderer.domElement, camera };
 }
