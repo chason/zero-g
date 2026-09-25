@@ -50,6 +50,35 @@ instead of a rewrite.
 **No drag, anywhere.** If velocity ever shrinks without a burn, something multiplies it by a
 factor below 1 and needs finding.
 
+## Play-space scale
+
+**v1 is small: every ship and target stays within 10 km of the world origin, and there is no
+floating origin.** `PLAY_SPACE_RADIUS` in `src/sim/world.ts` is that number; `step()` warns
+once per world if anything crosses it, so the limit is enforced rather than remembered.
+
+Why there is a limit at all: the simulation is float64 end to end (a `Vector3` holds plain
+JS numbers), so the physics does not care how far from the origin the action is. The GPU
+does — every transform reaches it as float32, whose resolution is about 1 mm at 10 km,
+1 cm at 100 km and 6 cm at 1000 km. The logarithmic depth buffer cures z-fighting at long
+range; it does nothing for this. It surfaces as jitter in whatever is close to the camera —
+the hull, the dust, the ring at contact — the moment resolution approaches the smallest
+feature the eye can resolve there, which from the seat is a 0.12 m dust grain or a 3 m
+ring you are closing at 0.5 m/s. That puts visible failure somewhere around 100 km.
+
+Why 10 km: an order of magnitude of margin under that, and 25 times more room than M6
+needs — one ring 400 m out and some asteroids to thread. The starfield at 5e6 and the
+camera's 1e7 far plane are unaffected: stars are a direction cue, not a position, and
+nothing ever travels toward them.
+
+Why not a floating origin now: it touches every position in the codebase — bodies, their
+`previous` poses, targets, the HUD projection, the dust wrap, the plumes — and every test
+that asserts an absolute number, to buy a distance no v1 scenario uses. Retrofitting it
+later is the expensive version of this decision, which is why it is written down here and
+guarded in code.
+
+**Trigger for revisiting:** when any object needs to be further than 10 km from origin,
+implement a floating origin — see #17.
+
 ## Input model
 
 Rotation and translation use different controllers and never share an axis, the way Apollo
