@@ -1,10 +1,10 @@
-import { netWrench, massFlow, currentMass, type Ship } from './ship';
+import { netWrench, massFlow, currentMass, dockingPortPosition, type Ship } from './ship';
 import { integrate, feltAcceleration, type Wrench } from './body';
 import { stepPilot } from './pilot';
 import { Vector3, G0 } from '../core/math';
 import type { Command } from '../control';
 
-/** Something the HUD can point at and the pilot can dock with. #25 supplies the real one. */
+/** Something the HUD can point at and the pilot can dock with. main.ts places the ring (#25). */
 export interface Target {
   name: string;
   /** world frame, metres */
@@ -15,6 +15,24 @@ export interface Target {
   radius: number;
 }
 
+/**
+ * The moment a ship's docking port first entered a target's contact radius (#25). Filled
+ * once, at that step, and never updated: the numbers here are what the run is judged on,
+ * so they must be the ones from the instant of contact, not from whatever the body did
+ * afterwards. There is no collision response — contact is an outcome to classify, not a
+ * physics problem.
+ */
+export interface Contact {
+  /** index into world.targets */
+  targetIndex: number;
+  /** |ship.velocity - target.velocity| at contact, m/s */
+  relativeSpeed: number;
+  /** |body.angularVelocity| at contact, in deg/s — the HUD's unit, so the two agree */
+  residualRotationDegPerSec: number;
+  /** world.time at contact, seconds */
+  time: number;
+}
+
 export interface World {
   ships: Ship[];
   /** all selectable targets; Tab cycles (#21) */
@@ -23,14 +41,18 @@ export interface World {
   selected: number;
   /** simulated seconds since start */
   time: number;
+  /** the first docking-port contact this run, or null while still flying (#25) */
+  contact: Contact | null;
 }
 
 /** Physics runs here and nowhere else, at a constant rate, independent of frame rate. */
 export const STEP = 1 / 120;
 
 export function createWorld(ships: Ship[] = []): World {
-  return { ships, targets: [], selected: -1, time: 0 };
+  return { ships, targets: [], selected: -1, time: 0, contact: null };
 }
+
+const RAD_TO_DEG = 180 / Math.PI;
 
 /**
  * Radius of the v1 play space, in metres: no ship or target may be further than this from
@@ -97,6 +119,38 @@ const scratchCommanded = { x: false, y: false, z: false };
 /** Scratch seat offset in the body frame, reused for the same reason. */
 const scratchSeat = new Vector3();
 
+/** Scratch docking-port world position and relative velocity, reused for the same reason. */
+const scratchPort = new Vector3();
+const scratchRelVel = new Vector3();
+
+/**
+ * Look for the first ship whose docking port lies within a target's contact radius and
+ * record it on the world. Runs after integration, so the pose it tests is the one this
+ * step produced, and the speed and spin it records are the ones the ship arrived with.
+ * Does nothing once a contact exists: the first contact is the one the run is judged on.
+ * Allocation-free; one squared distance per ship x target on the no-contact path.
+ */
+function detectContact(world: World): void {
+  if (world.contact !== null) return;
+  const { ships, targets } = world;
+  for (let i = 0; i < ships.length; i++) {
+    const ship = ships[i]!;
+    dockingPortPosition(ship, scratchPort);
+    for (let j = 0; j < targets.length; j++) {
+      const target = targets[j]!;
+      if (scratchPort.distanceToSquared(target.position) > target.radius * target.radius) continue;
+      scratchRelVel.copy(ship.body.velocity).sub(target.velocity);
+      world.contact = {
+        targetIndex: j,
+        relativeSpeed: scratchRelVel.length(),
+        residualRotationDegPerSec: ship.body.angularVelocity.length() * RAD_TO_DEG,
+        time: world.time,
+      };
+      return;
+    }
+  }
+}
+
 /**
  * Advance the whole world by exactly `dt` seconds. Never call with a variable dt.
  *
@@ -147,5 +201,10 @@ export function step(world: World, command: Command, dt: number): void {
   }
 
   world.time += dt;
+
+  // 6. contact (#25): tested against the pose the integration above just produced, and
+  //    stamped with the time that pose belongs to, which is why this follows the clock.
+  detectContact(world);
+
   assertWithinPlaySpace(world);
 }
