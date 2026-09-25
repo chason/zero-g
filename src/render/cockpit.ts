@@ -53,15 +53,35 @@ const mirror = (p: Point): Point => [-p[0], p[1], p[2]];
 // Left side, top to bottom. The right side is its mirror.
 const TOP = at(-1.16, 0.77); // off the top edge
 const JOINT = at(-0.65, 0.15); // the pillar's inward bend, a little above eye level
-const SPAR_END = at(-1.35, 0.15); // off the side edge
 const DASH_CORNER = at(-0.96, -0.37);
 const BOTTOM = at(-1.45, -0.77); // off the bottom corner
 const SHOULDER = at(-0.11, -0.252); // where the dash's edge levels off
+/**
+ * The sides (#55). On a window wider than about 2:1 the frame used to just stop, spar
+ * and pillar trailing off into open space. Past SIDE_AT there is now a rear pillar,
+ * where the spar ends and the lower pillar's foot lands, and beyond it the fuselage
+ * wall: solid, with a rail at spar height and one lower down running out along it and
+ * a frame every so often. On a 16:9 window all of this is off screen, so nothing there
+ * changes.
+ */
+export const SIDE_AT = 1.45;
+const SPAR_END = at(-SIDE_AT, 0.15); // on the rear pillar
+const REAR_TOP = at(-SIDE_AT, 2);
+const WALL_FAR = 4; // how far out the wall is drawn: past any window's edge
+const RAIL_LOW = -0.45;
+const WALL_FRAMES: readonly number[] = [2.1, 2.8];
 
 export const LEFT_PILLAR: readonly Point[] = [TOP, JOINT, DASH_CORNER, BOTTOM];
 export const LEFT_SPAR: readonly Point[] = [JOINT, SPAR_END];
+export const LEFT_REAR_PILLAR: readonly Point[] = [REAR_TOP, SPAR_END, BOTTOM];
 /** The dash's top edge, left to right. */
 export const COAMING: readonly Point[] = [DASH_CORNER, SHOULDER, mirror(SHOULDER), mirror(DASH_CORNER)];
+/** Lines on the left wall: two rails running out from the rear pillar, and the frames across them. */
+export const LEFT_WALL_LINES: readonly (readonly Point[])[] = [
+  [SPAR_END, at(-WALL_FAR, 0.15)],
+  [at(-SIDE_AT, RAIL_LOW), at(-WALL_FAR, RAIL_LOW)],
+  ...WALL_FRAMES.map((u) => [at(-u, 2), at(-u, -2)] as const),
+];
 
 export const COCKPIT_POLYLINES: readonly (readonly Point[])[] = [
   LEFT_PILLAR,
@@ -69,6 +89,10 @@ export const COCKPIT_POLYLINES: readonly (readonly Point[])[] = [
   LEFT_SPAR,
   LEFT_SPAR.map(mirror),
   COAMING,
+  LEFT_REAR_PILLAR,
+  LEFT_REAR_PILLAR.map(mirror),
+  ...LEFT_WALL_LINES,
+  ...LEFT_WALL_LINES.map((line) => line.map(mirror)),
 ];
 
 /**
@@ -77,10 +101,36 @@ export const COCKPIT_POLYLINES: readonly (readonly Point[])[] = [
  * flung far out and down so that, on any window, the exhaust of the nose thrusters —
  * which sit below and ahead of the seat — is under the dash wherever it could be seen.
  */
-const FLOOR = at(-4, -2.85);
+const FLOOR = at(-WALL_FAR, -2.85);
 export const DASH_OUTLINE: readonly Point[] = [
   FLOOR, mirror(FLOOR), mirror(BOTTOM), mirror(DASH_CORNER), mirror(SHOULDER), SHOULDER, DASH_CORNER, BOTTOM,
 ];
+/** The left wall's outline: everything past the rear pillar, top to bottom, out to WALL_FAR. */
+export const LEFT_WALL_OUTLINE: readonly Point[] = [at(-WALL_FAR, 2), REAR_TOP, BOTTOM, FLOOR];
+/** Every solid of the cockpit, as convex outlines laid out at depth 1: the dash and the two walls. */
+export const SOLID_OUTLINES: readonly (readonly Point[])[] = [
+  DASH_OUTLINE,
+  LEFT_WALL_OUTLINE,
+  LEFT_WALL_OUTLINE.map(mirror),
+];
+
+/** Is the view direction with tangents (u, v) covered by one of the cockpit's solids? */
+export function solidCovers(u: number, v: number): boolean {
+  for (const outline of SOLID_OUTLINES) {
+    let inside = false;
+    for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+      const [ux, vx] = tangentOf(outline[i]!), [uy, vy] = tangentOf(outline[j]!);
+      if (vx > v !== vy > v && u < ((uy - ux) * (v - vx)) / (vy - vx) + ux) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+/** A laid-out point as view tangents (x/depth, y/depth). */
+export function tangentOf(p: Point): [number, number] {
+  return [p[0] / -p[2], p[1] / -p[2]];
+}
 
 /** Flat xyz pairs, one segment per polyline edge. */
 export function cockpitStrokes(): Float32Array {
@@ -92,14 +142,16 @@ export function cockpitStrokes(): Float32Array {
 }
 
 /**
- * The dash: DASH_OUTLINE as a fan of triangles, each facing the eye, pushed out to
- * DASH_SOLID_DEPTH (and DASH_SETBACK beyond) so the frame's strokes and the instruments
- * both sit in front of it.
+ * The solids — the dash and the two walls — each outline as a fan of triangles facing
+ * the eye, pushed out to DASH_SOLID_DEPTH (and DASH_SETBACK beyond) so the frame's
+ * strokes and the instruments both sit in front of them.
  */
 export function dashGeometry(): THREE.BufferGeometry {
   const tris: number[] = [];
-  const [first] = DASH_OUTLINE;
-  for (let i = 1; i + 1 < DASH_OUTLINE.length; i++) tris.push(...first!, ...DASH_OUTLINE[i]!, ...DASH_OUTLINE[i + 1]!);
+  for (const outline of SOLID_OUTLINES) {
+    const [first] = outline;
+    for (let i = 1; i + 1 < outline.length; i++) tris.push(...first!, ...outline[i]!, ...outline[i + 1]!);
+  }
   // Every triangle must face the eye at the origin: the occluder material culls back faces.
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   for (let i = 0; i < tris.length; i += 9) {
