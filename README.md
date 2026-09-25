@@ -4,16 +4,31 @@ A browser-based Newtonian spaceflight simulator. Six degrees of freedom, real ri
 physics, finite propellant, and **no flight assist** — the computer never fires a thruster
 you did not ask for.
 
-This repository is a scaffold. The architecture, types and test suite are in place; the
-simulation itself is not written yet. The failing tests are the specification.
+You fly a small skiff to an assigned docking port on the *Yarrow*, a capital mining ship,
+through a field of tumbling rocks, from the seat of a vector-drawn cockpit. Every run is a
+new seed. The tests are the specification: what they pin is what the game promises.
 
 ## Getting started
 
 ```bash
-npm install
-npm test        # red — every stub throws
-npm run dev     # boots, renders, shows which stub halted the sim
+npm install     # on your own machine — never from an agent's shell into this folder
+npm test
+npm run dev     # then open the URL Vite prints; click the canvas to take the mouse, Esc for the controls
 ```
+
+## Deploying
+
+The game is a static site once built. The `Dockerfile` builds it with Node and serves it
+with nginx on port 80, so any Docker host runs it:
+
+```sh
+docker build -t zero-g .
+docker run --rm -p 8080:80 zero-g   # then open http://localhost:8080
+```
+
+On Coolify: add the GitHub repository as a new resource, choose **Dockerfile** as the build
+pack, set the port to **80**, and deploy. Every push to `main` can redeploy it if you turn
+on the repository's webhook in Coolify.
 
 ## Where to start
 
