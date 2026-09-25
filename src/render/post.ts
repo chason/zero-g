@@ -226,7 +226,8 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
     type: THREE.HalfFloatType,
     samples: 4,
     depthBuffer: true,
-    stencilBuffer: false,
+    // The stroke tiers stencil themselves so a joint is blended once, not twice.
+    stencilBuffer: true,
   });
   const composer = new EffectComposer(renderer, target);
   composer.setPixelRatio(ratio);
