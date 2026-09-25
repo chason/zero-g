@@ -14,6 +14,17 @@
       }
       /* each instrument owns one .inst and positions itself inside the layer */
       #hud .inst { position: absolute; white-space: pre; }
+      /* #32 thruster schematic: lower-centre, clear of the corners a blackout vignette eats first */
+      #hud .inst-thrusters { left: 50%; bottom: 28px; transform: translateX(-50%); }
+      #hud .inst-thrusters svg { display: block; overflow: visible; }
+      #hud .inst-thrusters .thr-frame { fill: none; stroke: currentColor; stroke-width: 1; opacity: .28; }
+      #hud .inst-thrusters .thr-label { fill: currentColor; stroke: none; font-size: 9px; letter-spacing: .12em; opacity: .55; }
+      /* dim outline of every thruster, always visible */
+      #hud .inst-thrusters .thr-off { fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; opacity: .32; }
+      #hud .inst-thrusters .thr-off .thr-dot { fill: currentColor; stroke: none; }
+      /* lit copy per thruster; the instrument writes each one's opacity from its throttle */
+      #hud .inst-thrusters .thr-on { fill: none; stroke: #eafff7; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 3px #7fd4c1); }
+      #hud .inst-thrusters .thr-on .thr-dot { fill: #eafff7; stroke: none; }
     </style>
   </head>
   <body>
