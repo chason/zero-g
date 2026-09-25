@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   cockpitStrokes, dashGeometry, createCockpit, COCKPIT_POLYLINES, COCKPIT_FADE, DASH_SETBACK, CLEAR_TAN,
   COCKPIT_SCALE, DASH_DEPTH, DASH_OUTLINE, COAMING, LEFT_PILLAR, LEFT_SPAR, DASH_SOLID_DEPTH,
+  SIDE_AT, LEFT_REAR_PILLAR, LEFT_WALL_LINES, LEFT_WALL_OUTLINE, SOLID_OUTLINES, solidCovers,
 } from '../src/render/cockpit';
 import { GLOW_TIERS } from '../src/render/vector';
 import { PLUME_LENGTH, PLUME_RADIUS, plumeScale } from '../src/render/plumes';
@@ -109,6 +110,36 @@ describe('cockpit frame (#51, #53)', () => {
     expect(DASH_SOLID_DEPTH).toBeGreaterThan(1.1);
   });
 
+  it('has sides past SIDE_AT: a rear pillar and a solid wall, off screen on 16:9, on screen on 21:9 (#55)', () => {
+    const WIDE = TAN_HALF_V * (21 / 9);
+    expect(SIDE_AT).toBeGreaterThan(TAN_HALF_H); // nothing of it on a 16:9 window
+    expect(SIDE_AT).toBeLessThan(WIDE); // but a 21:9 window sees the pillar and some wall
+    // the spar now ends on the rear pillar, and the lower pillar's foot is on it too
+    const [, sparEnd] = LEFT_SPAR;
+    expect(tan(sparEnd!)[0]).toBeCloseTo(-SIDE_AT, 9);
+    expect(LEFT_REAR_PILLAR).toContain(sparEnd);
+    expect(LEFT_REAR_PILLAR).toContain(LEFT_PILLAR[3]);
+    for (const p of LEFT_REAR_PILLAR) expect(tan(p)[0]).toBeCloseTo(-SIDE_AT, 9);
+    expect(tan(LEFT_REAR_PILLAR[0]!)[1]).toBeGreaterThan(TAN_HALF_V); // from above the top edge
+    expect(tan(LEFT_REAR_PILLAR[2]!)[1]).toBeLessThan(-TAN_HALF_V); // to below the bottom
+    // the wall is solid from the rear pillar outward, top to bottom, on any window
+    for (const u of [SIDE_AT + 0.01, WIDE, 2.4, 3.9]) {
+      for (const v of [-TAN_HALF_V, -0.3, 0, 0.4, TAN_HALF_V]) expect(solidCovers(-u, v), `(${-u}, ${v})`).toBe(true);
+    }
+    // and the side window inboard of it is open above the dash
+    expect(solidCovers(-(SIDE_AT - 0.05), 0)).toBe(false);
+    expect(solidCovers(-1.0, 0.3)).toBe(false);
+    expect(solidCovers(0, 0)).toBe(false);
+    // every wall line lies on or past the rear pillar
+    for (const line of LEFT_WALL_LINES) for (const p of line) expect(tan(p)[0]).toBeLessThanOrEqual(-SIDE_AT + 1e-9);
+    // the wall outline is a convex polygon: a fan draws it without a gap
+    expect(LEFT_WALL_OUTLINE.length).toBe(4);
+    expect(SOLID_OUTLINES.length).toBe(3);
+    // symmetric
+    expect(solidCovers(2.4, 0)).toBe(true);
+    expect(solidCovers(1.0, 0.3)).toBe(false);
+  });
+
   it('draws the dash nearer than every forward thruster nozzle, and past the near plane (#52)', () => {
     const { group } = createCockpit();
     expect(group.scale.x).toBeCloseTo(COCKPIT_SCALE, 9);
@@ -157,7 +188,7 @@ describe('cockpit frame (#51, #53)', () => {
           if (p.z >= -0.05) continue; // behind or beside the eye: out of the field of view
           const u = p.x / -p.z, v = p.y / -p.z;
           if (Math.abs(u) > WIDEST || Math.abs(v) > TAN_HALF_V) continue; // off any window
-          expect(v, `${t.id} plume shows past the dash at (${u.toFixed(2)}, ${v.toFixed(2)})`).toBeLessThan(dashTopAt(u) - 0.02);
+          expect(solidCovers(u, v + 0.02), `${t.id} plume shows past the dash at (${u.toFixed(2)}, ${v.toFixed(2)})`).toBe(true);
           checked++;
         }
       }
