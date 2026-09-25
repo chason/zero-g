@@ -16,6 +16,10 @@
       #hud .inst { position: absolute; white-space: pre; }
       /* #19: speed, range and closing rate relative to the target; glanced at constantly on approach */
       #hud .inst-velocity { top: 16px; left: 50%; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+      /* #22: propellant, current mass and remaining delta-v */
+      #hud .inst-propellant { right: 16px; bottom: 16px; font-variant-numeric: tabular-nums; }
+      #hud .inst-propellant .bar { height: 6px; margin: 2px 0; border: 1px solid currentColor; box-sizing: border-box; }
+      #hud .inst-propellant .fill { height: 100%; width: 100%; background: currentColor; }
     </style>
   </head>
   <body>

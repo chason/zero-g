@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Vector3 } from '../src/core/math';
+import { Vector3, G0 } from '../src/core/math';
 import { prepare } from '../src/sim/ship';
 import type { ShipSpec, Ship } from '../src/sim/ship';
 import { createBody } from '../src/sim/body';
@@ -16,6 +16,14 @@ import {
   velocityFields,
 } from '../src/hud/instruments/velocity';
 import type { VelocityFields, VelocityReadout } from '../src/hud/instruments/velocity';
+import {
+  computeReadout as computePropellant,
+  deltaV,
+  mainIsp,
+  propellantFields,
+  remainingDeltaV,
+} from '../src/hud/instruments/propellant';
+import type { PropellantFields, PropellantReadout } from '../src/hud/instruments/propellant';
 
 const spec = skiff as ShipSpec;
 
@@ -149,5 +157,92 @@ describe('velocity readout: no target', () => {
     const targets = [makeTarget(new Vector3(-100, 0, 0), new Vector3(), 'Ring A'), makeTarget(new Vector3(25_000, 0, 0), new Vector3(), 'Ring B')];
     const f = velocityFields(worldWith(ship, targets, 1), ship, freshFields());
     expect(f).toEqual({ target: 'Ring B', speed: '0.50', range: '25.0 km', closing: '-0.50' });
+  });
+});
+
+// --- propellant (#22) ---------------------------------------------------------------
+
+/** A spec with the same tanks as the skiff but a different engine set. */
+function specWithThrusters(thrusters: ShipSpec['thrusters']): ShipSpec {
+  return { ...spec, thrusters };
+}
+
+const freshPropellant = (): PropellantReadout => ({ propellant: 0, fraction: 0, mass: 0, isp: 0, deltaV: 0 });
+const freshPropellantFields = (): PropellantFields => ({ propellant: '', percent: '', mass: '', deltaV: '', fraction: 0 });
+
+describe('propellant readout: which Isp', () => {
+  it("uses the main engine's Isp, not the RCS thrusters'", () => {
+    expect(mainIsp(makeShip())).toBe(320);
+  });
+
+  it('falls back to the highest-thrust thruster when there is no main', () => {
+    const s = specWithThrusters([
+      { id: 'weak', position: [0, 0, 0], direction: [0, 0, -1], thrust: 100, isp: 400 },
+      { id: 'strong', position: [0, 0, 0], direction: [0, 0, -1], thrust: 5000, isp: 250 },
+      { id: 'medium', position: [0, 0, 0], direction: [0, 0, -1], thrust: 800, isp: 300 },
+    ]);
+    expect(mainIsp(makeShip(undefined, undefined, s))).toBe(250);
+  });
+
+  it('is zero with no thrusters, so delta-v is zero rather than NaN', () => {
+    const ship = makeShip(undefined, undefined, specWithThrusters([]));
+    expect(mainIsp(ship)).toBe(0);
+    expect(remainingDeltaV(ship)).toBe(0);
+  });
+});
+
+describe('propellant readout: the rocket equation', () => {
+  it('dv = isp * g0 * ln(m_now / m_dry), checked by hand', () => {
+    // a mass ratio of e makes the log exactly 1, so dv is exactly isp * g0
+    expect(deltaV(100, 1000 * Math.E, 1000)).toBeCloseTo(980.665, 9);
+    // the skiff, full: 320 * 9.80665 * ln(4900 / 4000) = 636.85 m/s
+    expect(remainingDeltaV(makeShip())).toBeCloseTo(636.85, 1);
+    expect(remainingDeltaV(makeShip())).toBeCloseTo(320 * G0 * Math.log(4900 / 4000), 9);
+  });
+
+  it('is zero once the tanks are dry and never negative', () => {
+    const ship = makeShip();
+    ship.propellant = 0;
+    expect(remainingDeltaV(ship)).toBe(0);
+    expect(deltaV(320, 3999, 4000)).toBe(0);
+    expect(deltaV(320, 4900, 0)).toBe(0);
+  });
+
+  it('reads mass fresh every time rather than caching it', () => {
+    const ship = makeShip();
+    const full = remainingDeltaV(ship);
+    ship.propellant = 450;
+    const half = remainingDeltaV(ship);
+    expect(half).toBeLessThan(full);
+    expect(half).toBeCloseTo(320 * G0 * Math.log(4450 / 4000), 9);
+    expect(computePropellant(ship, freshPropellant()).mass).toBe(4450);
+  });
+});
+
+describe('propellant readout: fields', () => {
+  it('shows kg, percent, current mass and delta-v to the resolutions the pilot reads', () => {
+    const f = propellantFields(makeShip(), freshPropellantFields());
+    expect(f.propellant).toBe('900.0');
+    expect(f.percent).toBe('100');
+    expect(f.mass).toBe('4900.0');
+    expect(f.deltaV).toBe('636.9');
+    expect(f.fraction).toBe(1);
+  });
+
+  it('the bar fraction follows the tanks and is clamped to 0..1', () => {
+    const ship = makeShip();
+    ship.propellant = 225;
+    const quarter = computePropellant(ship, freshPropellant());
+    expect(quarter.fraction).toBeCloseTo(0.25, 9);
+    expect(propellantFields(ship, freshPropellantFields()).percent).toBe('25');
+    ship.propellant = 0;
+    expect(computePropellant(ship, freshPropellant()).fraction).toBe(0);
+  });
+
+  it('never writes to the ship', () => {
+    const ship = makeShip();
+    propellantFields(ship, freshPropellantFields());
+    expect(ship.propellant).toBe(spec.propellantCapacity);
+    expect(ship.body.mass).toBe(spec.dryMass + spec.propellantCapacity);
   });
 });
