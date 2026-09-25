@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from '../src/core/math';
-import { createWorld, resetRun, step, STEP } from '../src/sim/world';
+import { createWorld, resetRun, step, STEP, createTarget, type TenderSpec } from '../src/sim/world';
+import tender from '../src/data/tender.json';
 import { createShip, type ShipSpec } from '../src/sim/ship';
 import { emptyCommand } from '../src/control';
 import { createKeyboardMouse } from '../src/input';
@@ -11,7 +12,7 @@ const spec = skiff as ShipSpec;
 function flownWorld() {
   const ship = createShip(spec);
   const world = createWorld([ship]);
-  world.targets.push({ name: 'ring', position: new Vector3(0, 0, -400), velocity: new Vector3(), radius: 3 });
+  world.targets.push(createTarget(tender as TenderSpec, new Vector3(0, 0, -400), new Vector3(0, 0, 1)));
   world.selected = 0;
   const cmd = emptyCommand(ship.prepared.length);
   cmd.throttles[ship.prepared.findIndex((p) => p.spec.id === 'main')] = 1;

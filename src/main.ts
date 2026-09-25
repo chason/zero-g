@@ -1,6 +1,7 @@
 import { createRenderer } from './render';
 import { createHud } from './hud';
-import { createWorld, resetRun, step, STEP, type World } from './sim/world';
+import { createWorld, createTarget, resetRun, step, STEP, type World, type TenderSpec } from './sim/world';
+import tenderSpec from './data/tender.json';
 import { emptyCommand, resolve, type Command } from './control';
 import { createKeyboardMouse } from './input';
 import { createShip, type ShipSpec } from './sim/ship';
@@ -19,7 +20,7 @@ const world: World = createWorld([skiff]);
 // and records the first contact; the renderer draws a torus of the same radius so what
 // the pilot flies at is exactly what the sim judges. Its axis faces the origin, so the
 // approach is straight down -Z from where the Skiff starts.
-world.targets.push({ name: 'ring', position: new Vector3(0, 0, -400), velocity: new Vector3(), radius: 3 });
+world.targets.push(createTarget(tenderSpec as TenderSpec, new Vector3(0, 0, -400), new Vector3(0, 0, 1)));
 world.selected = 0;
 // One throttle slot per thruster on the ship we actually loaded. Reused every frame:
 // resolve() writes into it in place, so the flight loop allocates nothing.

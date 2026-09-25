@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, torusStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { createVectorLines, createVectorStrokes, torusStrokes, tenderHullStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -43,8 +43,9 @@ function softSprite(): THREE.Texture {
 }
 
 /** Ring tube radius, metres. Thin enough to read as a hoop, thick enough to survive 400 m. */
-const RING_TUBE = 0.18;
 const RING_COLOR = 0xffb347;
+/** The tender's hull: dimmer and cooler than the ring so the docking target stays the eye's focus. */
+const HULL_COLOR = 0x6f9fae;
 
 export function createRenderer(): Renderer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
@@ -71,8 +72,8 @@ export function createRenderer(): Renderer {
   // only when a target appears and disposed only when it leaves; the per-frame path just
   // copies transforms. An unlit material is the right choice for an emissive hoop in
   // space: there are no lights in this scene to react to.
-  const targetMeshes = new Map<Target, VectorStrokes>();
-  const origin = new THREE.Vector3();
+  const targetMeshes = new Map<Target, { ring: VectorStrokes; hull: VectorStrokes; group: THREE.Group }>();
+  const unitZ = new THREE.Vector3(0, 0, 1);
 
   function syncTargets(targets: Target[]): void {
     // Cheap membership check first, so the steady state touches nothing.
@@ -83,19 +84,23 @@ export function createRenderer(): Renderer {
     for (const [target, mesh] of targetMeshes) {
       if (targets.includes(target)) continue;
       scene.remove(mesh.group);
-      mesh.dispose();
+      mesh.ring.dispose();
+      mesh.hull.dispose();
       targetMeshes.delete(target);
     }
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       if (targetMeshes.has(target)) continue;
       // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
-      // Hoops and longitudes, as a vector display would draw a torus. No level of
-      // detail: the glow is bounded per stroke, so a distant ring merges into a solid
-      // mark of its own colour instead of blooming, and nothing pops as you approach.
-      const mesh = createVectorStrokes(torusStrokes(target.radius, RING_TUBE), RING_COLOR);
-      scene.add(mesh.group);
-      targetMeshes.set(target, mesh);
+      // The ring as hoops and longitudes, and the hull behind it as cylinders along the
+      // group's -Z. No level of detail: the glow is bounded per stroke, so a distant
+      // tender merges into a solid mark of its own colour instead of blooming.
+      const ring = createVectorStrokes(torusStrokes(target.radius, target.tube), RING_COLOR);
+      const hull = createVectorStrokes(tenderHullStrokes(target.hull), HULL_COLOR);
+      const group = new THREE.Group();
+      group.add(ring.group, hull.group);
+      scene.add(group);
+      targetMeshes.set(target, { ring, hull, group });
     }
   }
 
@@ -181,18 +186,20 @@ export function createRenderer(): Renderer {
     }
     if (s) plumes.update(s);
 
-    // Targets are sim state too: position copied out every frame, never owned here. The
-    // torus lies in its local XY plane, so pointing its +Z at the world origin faces the
-    // hoop down the approach line from where the ship starts. lookAt is degenerate for a
-    // target sitting exactly on the origin; such a ring keeps whatever pose it had.
+    // Targets are sim state too: position and axis copied out every frame, never owned
+    // here.
     const { targets } = world;
     syncTargets(targets);
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       const mesh = targetMeshes.get(target)!;
       mesh.group.position.copy(target.position as unknown as THREE.Vector3);
-      if (mesh.group.position.lengthSq() > 0) mesh.group.lookAt(origin);
-      mesh.setFade(farFade(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight)));
+      // Local +Z is the open side; the hull runs down -Z. Oriented from the target's own
+      // axis, so a tender can face any way the data says.
+      mesh.group.quaternion.setFromUnitVectors(unitZ, target.axis as unknown as THREE.Vector3);
+      const fade = farFade(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight));
+      mesh.ring.setFade(fade);
+      mesh.hull.setFade(fade);
     }
 
     post.render(scene, camera, world);

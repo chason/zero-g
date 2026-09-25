@@ -208,6 +208,63 @@ export function torusStrokes(
   return new Float32Array(out);
 }
 
+/**
+ * A cylinder along -Z from z=-from to z=-to, as a vector display would draw it: hoops
+ * at each end and every `hoopSpacing` metres between, and `longitudes` lines along
+ * its length. Returns flat xyz pairs, appended to `out`.
+ */
+export function cylinderStrokes(
+  radius: number,
+  from: number,
+  to: number,
+  out: number[],
+  longitudes = 8,
+  hoopSpacing = 4,
+  hoopSegments = 24,
+): void {
+  const zs: number[] = [];
+  const length = to - from;
+  const n = Math.max(1, Math.round(length / hoopSpacing));
+  for (let i = 0; i <= n; i++) zs.push(-(from + (length * i) / n));
+  for (const z of zs) {
+    for (let i = 0; i < hoopSegments; i++) {
+      const a = (i / hoopSegments) * Math.PI * 2;
+      const b = ((i + 1) / hoopSegments) * Math.PI * 2;
+      out.push(radius * Math.cos(a), radius * Math.sin(a), z, radius * Math.cos(b), radius * Math.sin(b), z);
+    }
+  }
+  for (let l = 0; l < longitudes; l++) {
+    const a = (l / longitudes) * Math.PI * 2;
+    const x = radius * Math.cos(a);
+    const y = radius * Math.sin(a);
+    out.push(x, y, -from, x, y, -to);
+  }
+}
+
+/**
+ * The hull of a tender behind its ring: each section a cylinder, and where the radius
+ * steps between sections, spokes joining the two rims so the silhouette closes.
+ */
+export function tenderHullStrokes(
+  sections: ReadonlyArray<{ radius: number; from: number; to: number }>,
+  spokes = 8,
+): Float32Array {
+  const out: number[] = [];
+  for (const sec of sections) cylinderStrokes(sec.radius, sec.from, sec.to, out);
+  for (let i = 0; i + 1 < sections.length; i++) {
+    const a = sections[i]!;
+    const b = sections[i + 1]!;
+    if (Math.abs(a.radius - b.radius) < 1e-6) continue;
+    const z = -Math.min(a.to, b.from);
+    for (let k = 0; k < spokes; k++) {
+      const t = (k / spokes) * Math.PI * 2;
+      out.push(a.radius * Math.cos(t), a.radius * Math.sin(t), -a.to, b.radius * Math.cos(t), b.radius * Math.sin(t), -b.from);
+      void z;
+    }
+  }
+  return new Float32Array(out);
+}
+
 /** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */
 export function projectedRadiusPx(radius: number, distance: number, fovDeg: number, viewportHeightPx: number): number {
   if (distance <= 0) return Infinity;

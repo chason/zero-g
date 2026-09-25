@@ -6,9 +6,13 @@ import {
   STEP,
   DOCK_MAX_SPEED,
   DOCK_MAX_ROTATION_DEG_PER_SEC,
+  RING_PLANE_TOLERANCE,
+  createTarget,
   type Target,
   type World,
+  type TenderSpec,
 } from '../src/sim/world';
+import tender from '../src/data/tender.json';
 import { createShip, createPilot, dockingPortPosition } from '../src/sim/ship';
 import type { ShipSpec, Ship } from '../src/sim/ship';
 import { OMEGA_EPSILON } from '../src/sim/body';
@@ -20,12 +24,13 @@ import skiff from '../src/data/skiff.json';
 
 const spec = skiff as ShipSpec;
 
-/** The M6 ring: 400 m down -Z from the starting pose, static, 3 m contact radius. */
+/** The M6 tender: ring 400 m down -Z from the starting pose, facing +Z, static. */
 const RING_POSITION = new Vector3(0, 0, -400);
-const RING_RADIUS = 3;
+/** Contact is judged where the port enters the tolerance band at the ring plane. */
+const CONTACT_Z = RING_PLANE_TOLERANCE;
 
 function ring(): Target {
-  return { name: 'ring', position: RING_POSITION.clone(), velocity: new Vector3(), radius: RING_RADIUS };
+  return createTarget(tender as TenderSpec, RING_POSITION, new Vector3(0, 0, 1));
 }
 
 /**
@@ -37,8 +42,8 @@ function ring(): Target {
 function approach(gap: number, speed: number, spin = new Vector3()): { world: World; ship: Ship } {
   const ship = createShip(spec);
   const portZ = spec.dockingPort[2];
-  // port must sit at z = ring.z + radius + gap, so the centre of mass sits portZ further back
-  ship.body.position.set(0, 0, RING_POSITION.z + RING_RADIUS + gap - portZ);
+  // port must sit at z = ring.z + tolerance + gap, so the centre of mass sits portZ further back
+  ship.body.position.set(0, 0, RING_POSITION.z + CONTACT_Z + gap - portZ);
   ship.body.velocity.set(0, 0, -speed);
   ship.body.angularVelocity.copy(spin);
   const world = createWorld([ship]);
@@ -140,11 +145,11 @@ describe('contact detection (#25)', () => {
     run(world, 59);
     expect(world.contact).toBeNull();
     // the centre of mass is still 2.6 m behind the port, well outside the sphere
-    expect(ship.body.position.distanceTo(RING_POSITION)).toBeGreaterThan(RING_RADIUS);
+    expect(ship.body.position.distanceTo(RING_POSITION)).toBeGreaterThan(CONTACT_Z);
     run(world, 1);
     expect(world.contact).not.toBeNull();
-    expect(dockingPortPosition(ship, new Vector3()).distanceTo(RING_POSITION)).toBeLessThanOrEqual(RING_RADIUS);
-    expect(ship.body.position.distanceTo(RING_POSITION)).toBeGreaterThan(RING_RADIUS);
+    expect(dockingPortPosition(ship, new Vector3()).distanceTo(RING_POSITION)).toBeLessThanOrEqual(CONTACT_Z);
+    expect(ship.body.position.distanceTo(RING_POSITION)).toBeGreaterThan(CONTACT_Z);
   });
 
   it('records the target, the time, the relative speed and the spin at the instant of contact', () => {
