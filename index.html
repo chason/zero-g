@@ -97,10 +97,38 @@
         opacity: .8; letter-spacing: .04em;
       }
       #hud .inst-boresight .bore-text.bore-aligned { color: #b8ffd9; opacity: 1; }
+      /* #56 options menu: Esc. Sits over the HUD, takes the mouse, pauses the sim while open. */
+      #menu {
+        position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+        background: rgba(2, 3, 6, .62); pointer-events: auto; user-select: none;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #7fd4c1;
+        text-shadow: 0 0 1px rgba(200,255,240,.9), 0 0 6px rgba(127,212,193,.55), 0 0 14px rgba(127,212,193,.25);
+      }
+      #menu.open { display: flex; }
+      #menu .menu-panel {
+        border: 1px solid currentColor; background: rgba(5, 6, 10, .88); padding: 18px 26px 16px;
+        min-width: 360px; max-height: 92vh; overflow-y: auto;
+      }
+      #menu .menu-title { font-size: 22px; letter-spacing: .22em; font-weight: 700; text-align: center; }
+      #menu .menu-sub { text-align: center; opacity: .5; letter-spacing: .18em; margin-bottom: 14px; }
+      #menu .menu-head { letter-spacing: .18em; opacity: .55; margin: 12px 0 6px; border-bottom: 1px solid rgba(127,212,193,.25); }
+      #menu .menu-key { display: flex; gap: 14px; line-height: 1.7; }
+      #menu .menu-key-cap { width: 58px; text-align: right; color: #eafff7; font-weight: 700; flex: none; }
+      #menu .menu-key-act { opacity: .85; }
+      #menu .menu-setting { display: flex; align-items: center; gap: 10px; line-height: 1.9; }
+      #menu .menu-setting-label { width: 100px; opacity: .85; flex: none; }
+      #menu .menu-setting-value { min-width: 190px; text-align: center; color: #eafff7; }
+      #menu .menu-btn {
+        font: inherit; color: inherit; background: none; border: 1px solid rgba(127,212,193,.5);
+        width: 26px; height: 22px; line-height: 1; cursor: pointer; padding: 0; text-shadow: inherit;
+      }
+      #menu .menu-btn:hover { background: rgba(127,212,193,.15); }
+      #menu .menu-hint { margin-top: 14px; opacity: .5; letter-spacing: .1em; text-align: center; }
     </style>
   </head>
   <body>
     <div id="hud"></div>
+    <div id="menu"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
