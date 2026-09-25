@@ -8,7 +8,7 @@ import { createWorld, resetRun, step, STEP, structureStrike, obstacleStrike, typ
 import { createShip, type ShipSpec } from '../src/sim/ship';
 import { emptyCommand } from '../src/control';
 import { summaryFields, freshSummaryFields } from '../src/hud/instruments/summary';
-import { asteroidStrokes, ROCK_MIN_SCALE } from '../src/render/vector';
+import { asteroidStrokes, asteroidGeometry, ROCK_MIN_SCALE } from '../src/render/vector';
 import skiff from '../src/data/skiff.json';
 import capital from '../src/data/capital.json';
 
@@ -226,6 +226,23 @@ describe('asteroid strokes', () => {
     expect(maxR).toBeGreaterThan(8);                    // but uses most of it
     expect(minR).toBeGreaterThanOrEqual(10 * ROCK_MIN_SCALE * 0.78 - 1e-6); // dents and squash bounded
     expect(maxR - minR).toBeGreaterThan(1);             // visibly irregular
+  });
+
+  it('is convex: no edge can ever vanish mid-face behind a lip', () => {
+    for (const seed of [1, 2, 3, 77, 4242]) {
+      const g = asteroidGeometry(10, seed);
+      const p = g.getAttribute('position');
+      const verts: Vector3[] = [];
+      for (let i = 0; i < p.count; i++) verts.push(new Vector3(p.getX(i), p.getY(i), p.getZ(i)));
+      // every triangle's plane has every vertex on its inner side
+      for (let i = 0; i + 2 < p.count; i += 3) {
+        const a = verts[i]!, b = verts[i + 1]!, c = verts[i + 2]!;
+        const n = new Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
+        const d = n.dot(a);
+        for (const v of verts) expect(n.dot(v) - d).toBeLessThanOrEqual(1e-6);
+      }
+      g.dispose();
+    }
   });
 
   it('is the same rock for the same seed and a different rock for another', () => {

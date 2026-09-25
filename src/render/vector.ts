@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { rng } from '../core/random';
 
 /**
@@ -375,15 +376,18 @@ export function portStrokes(radius: number, tube: number, collar: number): Float
 }
 
 /**
- * A rock as a vector display would draw it: the edges of a lumpy low-poly polyhedron.
- * An icosphere is dented by a few seeded caps and squashed along its axes, so every
- * rock has its own silhouette and the same seed always gives the same rock. Every
- * vertex stays inside `radius`, which is what the sim judges collisions against.
+ * A rock as a vector display would draw it: the edges of an irregular CONVEX polyhedron.
+ * Convex matters (#48): a dented shape is concave, and hidden-line removal on a concave
+ * solid correctly shows edges that vanish mid-face behind the dent's lip — right for a
+ * cave, wrong for a rock. So a rock is the convex hull of a couple of dozen seeded
+ * points scattered inside a squashed sphere. Every vertex stays inside `radius`, which
+ * is what the sim judges collisions against; the same seed is always the same rock.
  */
-export const ROCK_MIN_SCALE = 0.62;
+export const ROCK_MIN_SCALE = 0.7;
+export const ROCK_POINTS: readonly [number, number] = [16, 26];
 
-export function asteroidStrokes(radius: number, seed: number, detail = 1, creaseDeg = 6): Float32Array {
-  const geometry = asteroidGeometry(radius, seed, detail);
+export function asteroidStrokes(radius: number, seed: number, creaseDeg = 8): Float32Array {
+  const geometry = asteroidGeometry(radius, seed);
   const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
   const out = new Float32Array(edges.getAttribute('position').array as Float32Array);
   edges.dispose();
@@ -392,33 +396,23 @@ export function asteroidStrokes(radius: number, seed: number, detail = 1, crease
 }
 
 /** The rock's solid, before it is reduced to edges. Same seed, same rock. */
-export function asteroidGeometry(radius: number, seed: number, detail = 1): THREE.BufferGeometry {
+export function asteroidGeometry(radius: number, seed: number): THREE.BufferGeometry {
   const next = rng(seed);
-  // a handful of dents: a direction, a cap width and a depth each
-  const dents = Array.from({ length: 4 + Math.floor(next() * 3) }, () => ({
-    dir: new THREE.Vector3(next() * 2 - 1, next() * 2 - 1, next() * 2 - 1).normalize(),
-    width: 0.45 + next() * 0.4, // cos of the cap's half-angle: bigger = narrower
-    depth: 0.12 + next() * 0.2,
-  }));
   const squash = new THREE.Vector3(0.78 + next() * 0.22, 0.78 + next() * 0.22, 0.78 + next() * 0.22);
-
-  const geometry = new THREE.IcosahedronGeometry(1, detail);
-  const pos = geometry.getAttribute('position') as THREE.BufferAttribute;
-  const d = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    d.fromBufferAttribute(pos, i).normalize();
-    let scale = 1;
-    for (const dent of dents) {
-      const c = d.dot(dent.dir);
-      if (c > dent.width) {
-        const t = (c - dent.width) / (1 - dent.width); // 0 at the cap's edge, 1 at its centre
-        scale -= dent.depth * t * t * (3 - 2 * t);
-      }
-    }
-    scale = Math.max(ROCK_MIN_SCALE, scale);
-    pos.setXYZ(i, d.x * scale * squash.x * radius, d.y * scale * squash.y * radius, d.z * scale * squash.z * radius);
+  const count = ROCK_POINTS[0] + Math.floor(next() * (ROCK_POINTS[1] - ROCK_POINTS[0] + 1));
+  const points: THREE.Vector3[] = [];
+  for (let i = 0; i < count; i++) {
+    // a direction, uniform over the sphere, pushed to somewhere between the floor and the rim
+    const z = next() * 2 - 1;
+    const t = next() * Math.PI * 2;
+    const r = Math.sqrt(1 - z * z);
+    const scale = ROCK_MIN_SCALE + next() * (1 - ROCK_MIN_SCALE);
+    points.push(new THREE.Vector3(r * Math.cos(t) * squash.x, r * Math.sin(t) * squash.y, z * squash.z).multiplyScalar(radius * scale));
   }
-  pos.needsUpdate = true;
+  // guarantee the rock uses its radius: one point at full extent so the silhouette is not timid
+  const z = next() * 2 - 1, t = next() * Math.PI * 2, r = Math.sqrt(1 - z * z);
+  points.push(new THREE.Vector3(r * Math.cos(t) * squash.x, r * Math.sin(t) * squash.y, z * squash.z).normalize().multiplyScalar(radius));
+  const geometry = new ConvexGeometry(points);
   geometry.computeVertexNormals();
   return geometry;
 }
