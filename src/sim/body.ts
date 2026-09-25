@@ -17,6 +17,12 @@ export interface RigidBody {
   mass: number;
   /** diagonal of the inertia tensor, BODY frame, kg m^2 */
   inertia: Vector3;
+  /**
+   * Pose at the START of the most recent integrate() step. Render-only: the frame loop
+   * interpolates from this toward the current pose by its leftover alpha, so a display
+   * running faster than the physics rate never shows the same pose twice.
+   */
+  previous: { position: Vector3; orientation: Quaternion };
 }
 
 /** A force and torque, both expressed in the BODY frame. */
@@ -37,13 +43,21 @@ export const OMEGA_EPSILON = 3e-4;
 export type RecentInput = boolean | { x: boolean; y: boolean; z: boolean };
 
 export function createBody(init: Partial<RigidBody> = {}): RigidBody {
+  const position = init.position?.clone() ?? new Vector3();
+  const orientation = init.orientation?.clone() ?? new Quaternion();
   return {
-    position: init.position?.clone() ?? new Vector3(),
+    position,
     velocity: init.velocity?.clone() ?? new Vector3(),
-    orientation: init.orientation?.clone() ?? new Quaternion(),
+    orientation,
     angularVelocity: init.angularVelocity?.clone() ?? new Vector3(),
     mass: init.mass ?? 1,
     inertia: init.inertia?.clone() ?? new Vector3(1, 1, 1),
+    // A fresh body has nowhere to interpolate from, so previous starts equal to current.
+    // A clone keeps its source's previous so it stays a faithful copy mid-step.
+    previous: {
+      position: (init.previous?.position ?? position).clone(),
+      orientation: (init.previous?.orientation ?? orientation).clone(),
+    },
   };
 }
 
@@ -68,6 +82,11 @@ export function integrate(
   dt: number,
   hasRecentInput: RecentInput = false,
 ): void {
+  // --- snapshot the pose before anything moves, so the renderer can interpolate ---
+  // Copies in place: this is the per-step hot path and allocates nothing.
+  body.previous.position.copy(body.position);
+  body.previous.orientation.copy(body.orientation);
+
   // --- linear: force arrives in the BODY frame, rotate it into world before use ---
   const accel = wrench.force.clone().applyQuaternion(body.orientation).divideScalar(body.mass);
   body.velocity.addScaledVector(accel, dt);

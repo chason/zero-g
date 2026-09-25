@@ -18,6 +18,10 @@ export interface AxisState {
   fine: boolean;
   /** Space: cut everything this tick */
   cutAll: boolean;
+  /** V: true on the one sample after the key goes down, then false until it is released and pressed again */
+  toggleView: boolean;
+  /** Tab: same edge semantics as toggleView; advances world.selected through world.targets */
+  cycleTarget: boolean;
 }
 
 export interface InputDevice {
@@ -41,6 +45,8 @@ export function emptyAxes(): AxisState {
     rotate: { x: 0, y: 0, z: 0 },
     fine: false,
     cutAll: false,
+    toggleView: false,
+    cycleTarget: false,
   };
 }
 
@@ -143,6 +149,22 @@ export function createKeyboardMouse(
   let shift = false;
   let space = false;
 
+  /**
+   * Edge-triggered keys. `down` blocks auto-repeat and a second keydown while held;
+   * `pending` latches the press until the next sample() reads and clears it, so a tap
+   * shorter than one frame still registers exactly once.
+   */
+  const edge = {
+    view: { down: false, pending: false },
+    target: { down: false, pending: false },
+  };
+
+  function press(e: { down: boolean; pending: boolean }, repeat: boolean | undefined): void {
+    if (repeat || e.down) return;
+    e.down = true;
+    e.pending = true;
+  }
+
   function clampStick(): void {
     const r = Math.hypot(stick.x, stick.y);
     if (r > 1) {
@@ -179,7 +201,12 @@ export function createKeyboardMouse(
     if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
   }
 
-  function onKeyDown(event: { code?: string; key?: string; repeat?: boolean }): void {
+  function onKeyDown(event: {
+    code?: string;
+    key?: string;
+    repeat?: boolean;
+    preventDefault?: () => void;
+  }): void {
     const code = event.code ?? event.key ?? '';
     if (code === 'ShiftLeft' || code === 'ShiftRight' || code === 'Shift') {
       shift = true;
@@ -187,6 +214,16 @@ export function createKeyboardMouse(
     }
     if (code === 'Space') {
       space = true;
+      return;
+    }
+    if (code === 'KeyV') {
+      press(edge.view, event.repeat);
+      return;
+    }
+    if (code === 'Tab') {
+      // Tab would otherwise walk browser focus off the canvas.
+      event.preventDefault?.();
+      press(edge.target, event.repeat);
       return;
     }
     if (code === 'Escape') {
@@ -208,6 +245,14 @@ export function createKeyboardMouse(
     }
     if (code === 'Space') {
       space = false;
+      return;
+    }
+    if (code === 'KeyV') {
+      edge.view.down = false;
+      return;
+    }
+    if (code === 'Tab') {
+      edge.target.down = false;
       return;
     }
     const state = keys.get(code);
@@ -287,6 +332,11 @@ export function createKeyboardMouse(
 
       axes.fine = shift;
       axes.cutAll = space;
+      // Edge flags: read once, then cleared, so each press is seen by exactly one frame.
+      axes.toggleView = edge.view.pending;
+      edge.view.pending = false;
+      axes.cycleTarget = edge.target.pending;
+      edge.target.pending = false;
       return axes;
     },
     dispose(): void {
@@ -300,6 +350,8 @@ export function createKeyboardMouse(
       }
       if (canvas && hasDom) canvas.removeEventListener('click', onCanvasClick);
       keys.clear();
+      edge.view.down = edge.view.pending = false;
+      edge.target.down = edge.target.pending = false;
     },
   };
 
