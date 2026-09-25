@@ -14,6 +14,13 @@
       }
       /* each instrument owns one .inst and positions itself inside the layer */
       #hud .inst { position: absolute; white-space: pre; }
+      /* rotation readout (#18): lower-left, where a pilot glances. Brightness tracks the
+         displayed magnitude via classes the instrument toggles on each row. */
+      #hud .inst-rotation { left: 16px; bottom: 16px; }
+      #hud .inst-rotation .rot-head { opacity: .55; }
+      #hud .inst-rotation .rate-dim { opacity: .45; }
+      #hud .inst-rotation .rate-live { opacity: 1; }
+      #hud .inst-rotation .rate-alert { opacity: 1; color: #ffb347; font-weight: 700; }
     </style>
   </head>
   <body>
