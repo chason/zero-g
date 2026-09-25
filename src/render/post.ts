@@ -246,6 +246,9 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
 
   function fit(): void {
     const s = renderer.getSize(scratchSize);
+    // A canvas that has not been laid out yet (hidden pane, first frame) reports 0x0;
+    // sizing the chain to that leaves every attachment empty and GL warns on each draw.
+    if (s.x < 1 || s.y < 1) return;
     const r = renderer.getPixelRatio();
     composer.setPixelRatio(r);
     composer.setSize(s.x, s.y);

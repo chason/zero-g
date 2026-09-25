@@ -31,7 +31,7 @@ describe('vector strokes', () => {
     const lines = createVectorLines(new THREE.ConeGeometry(1, 2, 8), 0x9fd9cc);
     const m = lines.material as any;
     expect(m.linewidth).toBe(STROKE_PX);
-    expect(m.blending).toBe(THREE.AdditiveBlending);
+    expect(m.blending).toBe(THREE.NormalBlending); // additive blew out the distant ring into a blob
     expect(m.depthWrite).toBe(false);
     expect(lines.geometry.getAttribute('instanceStart').count).toBe(edgeSegmentCount(new THREE.ConeGeometry(1, 2, 8)));
     disposeVectorLines(lines);

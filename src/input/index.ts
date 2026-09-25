@@ -63,14 +63,19 @@ const PULSE_BINDINGS: ReadonlyArray<{
   axis: 'x' | 'y' | 'z';
   sign: 1 | -1;
 }> = [
-  { code: 'KeyW', channel: 'translate', axis: 'z', sign: 1 },
-  { code: 'KeyS', channel: 'translate', axis: 'z', sign: -1 },
+  // The nose is body -Z (the hull is built that way and the cockpit camera looks down
+  // -Z), so "forward" is a NEGATIVE z demand. Getting this sign wrong puts the main
+  // engine on S; test/handedness.test.ts pins it.
+  { code: 'KeyW', channel: 'translate', axis: 'z', sign: -1 },
+  { code: 'KeyS', channel: 'translate', axis: 'z', sign: 1 },
   { code: 'KeyD', channel: 'translate', axis: 'x', sign: 1 },
   { code: 'KeyA', channel: 'translate', axis: 'x', sign: -1 },
   { code: 'KeyR', channel: 'translate', axis: 'y', sign: 1 },
   { code: 'KeyF', channel: 'translate', axis: 'y', sign: -1 },
-  { code: 'KeyE', channel: 'rotate', axis: 'z', sign: 1 },
-  { code: 'KeyQ', channel: 'rotate', axis: 'z', sign: -1 },
+  // Roll right (starboard wing down, clockwise from the seat) is rotation about the
+  // nose axis, which is -Z: a NEGATIVE z torque demand.
+  { code: 'KeyE', channel: 'rotate', axis: 'z', sign: -1 },
+  { code: 'KeyQ', channel: 'rotate', axis: 'z', sign: 1 },
 ];
 
 /**
@@ -317,7 +322,10 @@ export function createKeyboardMouse(
         stick.y = springFrom.y * k;
       }
 
-      axes.rotate.y = shape(stick.x, device.exponent);
+      // Stick right = yaw right = nose toward +X. For a nose on -Z that is rotation
+      // about -Y, so the demand is negated. Stick back (mouse toward the pilot, +y)
+      // = pitch up = rotation about +X: joystick convention, sign as-is.
+      axes.rotate.y = shape(-stick.x, device.exponent); // shape() returns +0 for a centred stick
       axes.rotate.x = shape(stick.y, device.exponent);
 
       for (const binding of PULSE_BINDINGS) {
