@@ -4,7 +4,8 @@ import { createWorld, resetRun, step, STEP, type World, type StructureSpec } fro
 import { generateScenario, applyScenario } from './sim/scenario';
 import capitalSpec from './data/capital.json';
 import { emptyCommand, resolve, type Command } from './control';
-import { createKeyboardMouse } from './input';
+import { createKeyboardMouse, emptyAxes } from './input';
+import { createMenu } from './menu';
 import { createShip, type ShipSpec } from './sim/ship';
 import skiffSpec from './data/skiff.json';
 
@@ -36,6 +37,11 @@ const command: Command = emptyCommand(skiff.prepared.length);
 // The only thing in the program that touches a raw device event. Bound to the renderer's
 // canvas so a click takes pointer lock and the mouse becomes the rotational controller.
 const device = createKeyboardMouse(renderer.canvas);
+// Esc opens the options menu (#56); while it is open the sim is paused and the pointer
+// is free. Closing it hands the mouse back. Mouse settings persist in localStorage.
+const menu = createMenu(document.getElementById('menu')!, { device, onResume: () => device.capture() });
+/** what the ship is told while the menu is up: nothing */
+const idle = emptyAxes();
 
 let accumulator = 0;
 let last = performance.now() / 1000;
@@ -68,22 +74,35 @@ function frame() {
       // and this command is simply not consumed; at 30 Hz four steps share it. Both are
       // correct — the command is the pilot's demand, not a per-step quantity.
       const axes = device.sample(frameDt);
-      // Edge flags are true for exactly the one frame their key went down. The view is a
-      // render concern; the target selection is world state the HUD reads (#21).
-      if (axes.toggleView) renderer.toggleView();
-      if (axes.cycleTarget && world.targets.length > 0) {
-        world.selected = (world.selected + 1) % world.targets.length;
+      // Esc (or losing the mouse) toggles the menu; a click on the canvas that takes the
+      // mouse back closes it. Open, the menu pauses the sim: the accumulator is drained so
+      // no time is owed when it closes, and the ship is commanded to do nothing.
+      if (axes.menu) {
+        menu.toggle();
+        if (!menu.open) device.capture();
       }
-      // Restart resets in place, so every reference below stays valid. Legal mid-run too.
-      if (axes.restart) {
-        seed = (seed * 1103515245 + 12345) >>> 0;
-        newRun();
-      }
-      resolve(skiff, axes, command);
+      if (menu.open && device.locked) menu.hide();
+      if (menu.open) {
+        resolve(skiff, idle, command);
+        accumulator = 0;
+      } else {
+        // Edge flags are true for exactly the one frame their key went down. The view is a
+        // render concern; the target selection is world state the HUD reads (#21).
+        if (axes.toggleView) renderer.toggleView();
+        if (axes.cycleTarget && world.targets.length > 0) {
+          world.selected = (world.selected + 1) % world.targets.length;
+        }
+        // Restart resets in place, so every reference below stays valid. Legal mid-run too.
+        if (axes.restart) {
+          seed = (seed * 1103515245 + 12345) >>> 0;
+          newRun();
+        }
+        resolve(skiff, axes, command);
 
-      while (accumulator >= STEP) {
-        step(world, command, STEP);
-        accumulator -= STEP;
+        while (accumulator >= STEP) {
+          step(world, command, STEP);
+          accumulator -= STEP;
+        }
       }
     } catch (err) {
       halted = err instanceof Error ? err.message : String(err);

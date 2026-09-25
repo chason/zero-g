@@ -24,6 +24,13 @@ export interface AxisState {
   cycleTarget: boolean;
   /** Enter: same edge semantics; restarts the run in place, at any time (#34) */
   restart: boolean;
+  /**
+   * Esc, or the pointer lock going away: the pilot wants the options menu (#56). Edge
+   * semantics like the others. One request per frame however it arrived, so the
+   * browser's own Esc handling of pointer lock and the keydown it may also deliver
+   * cannot open and close the menu in one go.
+   */
+  menu: boolean;
 }
 
 export interface InputDevice {
@@ -50,8 +57,12 @@ export function emptyAxes(): AxisState {
     toggleView: false,
     cycleTarget: false,
     restart: false,
+    menu: false,
   };
 }
+
+/** An Esc keydown this soon after the pointer lock went away is the same press that took the lock, not a second one. */
+export const ESC_AFTER_UNLOCK_MS = 250;
 
 /** Pixels of pointer travel that move the virtual stick from centre to full deflection. */
 export const STICK_RANGE_PX = 400;
@@ -78,6 +89,60 @@ const PULSE_BINDINGS: ReadonlyArray<{
   { code: 'KeyQ', channel: 'rotate', axis: 'z', sign: 1 },
 ];
 
+export interface KeyBinding {
+  /** the key as printed on it */
+  key: string;
+  /** what it does, for a pilot */
+  action: string;
+}
+
+const KEY_LABELS: Readonly<Record<string, string>> = {
+  KeyW: 'W', KeyS: 'S', KeyA: 'A', KeyD: 'D', KeyR: 'R', KeyF: 'F', KeyQ: 'Q', KeyE: 'E',
+};
+
+/** The action each pulse binding performs, worded for the options menu. */
+function describe(b: (typeof PULSE_BINDINGS)[number]): string {
+  if (b.channel === 'translate') {
+    if (b.axis === 'z') return b.sign < 0 ? 'forward (main engine)' : 'retro';
+    if (b.axis === 'x') return b.sign > 0 ? 'right' : 'left';
+    return b.sign > 0 ? 'up' : 'down';
+  }
+  return b.sign < 0 ? 'roll right' : 'roll left';
+}
+
+/**
+ * Every control, as the options menu lists it (#56): the pulse keys straight from
+ * PULSE_BINDINGS, so a rebinding there shows here with no second table to forget, then
+ * the mouse and the fixed keys.
+ */
+export function keyBindings(): KeyBinding[] {
+  const find = (channel: 'translate' | 'rotate', axis: 'x' | 'y' | 'z', sign: 1 | -1) =>
+    PULSE_BINDINGS.find((b) => b.channel === channel && b.axis === axis && b.sign === sign);
+  const order = [
+    find('translate', 'z', -1), find('translate', 'z', 1),
+    find('translate', 'x', -1), find('translate', 'x', 1),
+    find('translate', 'y', 1), find('translate', 'y', -1),
+    find('rotate', 'z', 1), find('rotate', 'z', -1),
+  ];
+  const rows: KeyBinding[] = [];
+  for (const b of order) {
+    if (b) rows.push({ key: KEY_LABELS[b.code] ?? b.code, action: describe(b) });
+  }
+  for (const b of PULSE_BINDINGS) {
+    if (!order.includes(b)) rows.push({ key: KEY_LABELS[b.code] ?? b.code, action: describe(b) });
+  }
+  rows.push(
+    { key: 'MOUSE', action: 'yaw and pitch, proportional' },
+    { key: 'SHIFT', action: `fine: ${Math.round(FINE_SCALE * 100)}% thrust while held` },
+    { key: 'SPACE', action: 'cut all thrust' },
+    { key: 'V', action: 'cockpit / chase view' },
+    { key: 'TAB', action: 'cycle target' },
+    { key: 'ENTER', action: 'restart with a new seed' },
+    { key: 'ESC', action: 'options' },
+  );
+  return rows;
+}
+
 /**
  * Anything with addEventListener/removeEventListener. Real code passes `window` and
  * `document`; a test passes a stub, which is what keeps the state machines headless.
@@ -103,10 +168,18 @@ export interface KeyboardMouseOptions {
 export interface KeyboardMouseDevice extends InputDevice {
   /** Response curve exponent, settable at runtime. 1 = linear, 2 = default, 3 = finer centre. */
   exponent: number;
+  /** Mouse toward the pilot is nose UP by default (joystick convention); true flips it (#56). */
+  invertPitch: boolean;
+  /** Pixels from centre to full stick deflection, settable at runtime: fewer is more sensitive (#56). */
+  stickRangePx: number;
   /** Current virtual stick position, unit radius, before deadzone and curve. */
   readonly stick: { x: number; y: number };
   /** True while the pointer is locked (always true when driven headless). */
   readonly locked: boolean;
+  /** Take the pointer, if there is a canvas to take it for: what a click on it does. */
+  capture(): void;
+  /** Let the pointer go. */
+  release(): void;
 }
 
 /** One pulse-key's state machine: open while down, for a minimum of PULSE_MS. */
@@ -128,7 +201,6 @@ export function createKeyboardMouse(
   options: KeyboardMouseOptions = {},
 ): KeyboardMouseDevice {
   const now = options.now ?? (() => performance.now());
-  const stickRange = options.stickRangePx ?? STICK_RANGE_PX;
 
   const hasDom = typeof document !== 'undefined';
   const keySource =
@@ -156,6 +228,9 @@ export function createKeyboardMouse(
   const keys = new Map<string, KeyState>();
   let shift = false;
   let space = false;
+  /** the options menu was asked for since the last sample() */
+  let menuPending = false;
+  let lockLostAt = -Infinity;
 
   /**
    * Edge-triggered keys. `down` blocks auto-repeat and a second keydown while held;
@@ -187,14 +262,15 @@ export function createKeyboardMouse(
     const dx = event.movementX ?? 0;
     const dy = event.movementY ?? 0;
     if (dx === 0 && dy === 0) return;
-    stick.x += dx / stickRange;
-    stick.y += dy / stickRange;
+    stick.x += dx / device.stickRangePx;
+    stick.y += dy / device.stickRangePx;
     clampStick();
     movedThisFrame = true;
   }
 
   function onPointerLockChange(): void {
     if (!hasDom || !canvas) return;
+    const was = locked;
     locked = document.pointerLockElement === canvas;
     if (!locked) {
       stick.x = 0;
@@ -202,12 +278,32 @@ export function createKeyboardMouse(
       springFrom.x = 0;
       springFrom.y = 0;
       springElapsed = SPRING_MS;
+      // Losing the lock — Esc, which the browser may handle without telling us, or a
+      // tab-out — is a request for the menu: the pilot is no longer flying.
+      if (was) {
+        menuPending = true;
+        lockLostAt = now();
+      }
     }
   }
 
-  function onCanvasClick(): void {
+  function capture(): void {
     if (!hasDom || !canvas) return;
-    if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+    if (document.pointerLockElement !== canvas) {
+      // Returns a promise in newer browsers; a refusal (asked too soon after an Esc,
+      // say) just leaves the pointer free, and the next click asks again.
+      const result = canvas.requestPointerLock() as unknown;
+      if (result && typeof (result as Promise<void>).catch === 'function') (result as Promise<void>).catch(() => {});
+    }
+  }
+
+  function release(): void {
+    if (!hasDom) return;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  function onCanvasClick(): void {
+    capture();
   }
 
   function onKeyDown(event: {
@@ -240,7 +336,12 @@ export function createKeyboardMouse(
       return;
     }
     if (code === 'Escape') {
-      if (hasDom && document.pointerLockElement) document.exitPointerLock();
+      if (hasDom && document.pointerLockElement) {
+        // Let go of the mouse; the lock change is what raises the menu.
+        document.exitPointerLock();
+      } else if (!event.repeat && now() - lockLostAt > ESC_AFTER_UNLOCK_MS) {
+        menuPending = true;
+      }
       return;
     }
     if (event.repeat) return;
@@ -295,12 +396,16 @@ export function createKeyboardMouse(
 
   const device: KeyboardMouseDevice = {
     exponent: 2,
+    invertPitch: false,
+    stickRangePx: options.stickRangePx ?? STICK_RANGE_PX,
     get stick() {
       return { x: stick.x, y: stick.y };
     },
     get locked() {
       return locked;
     },
+    capture,
+    release,
     /** `dt` is the frame time in SECONDS, matching the rest of the sim. */
     sample(dt: number): AxisState {
       const axes = emptyAxes();
@@ -326,7 +431,7 @@ export function createKeyboardMouse(
       // about -Y, so the demand is negated. Stick back (mouse toward the pilot, +y)
       // = pitch up = rotation about +X: joystick convention, sign as-is.
       axes.rotate.y = shape(-stick.x, device.exponent); // shape() returns +0 for a centred stick
-      axes.rotate.x = shape(stick.y, device.exponent);
+      axes.rotate.x = shape(device.invertPitch ? -stick.y : stick.y, device.exponent);
 
       for (const binding of PULSE_BINDINGS) {
         const state = keys.get(binding.code);
@@ -359,6 +464,8 @@ export function createKeyboardMouse(
       edge.target.pending = false;
       axes.restart = edge.restart.pending;
       edge.restart.pending = false;
+      axes.menu = menuPending;
+      menuPending = false;
       return axes;
     },
     dispose(): void {
