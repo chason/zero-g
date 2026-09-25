@@ -311,6 +311,42 @@ export function frontFacingEdges(edges: CreaseEdges, eye: THREE.Vector3, out: Fl
   return n;
 }
 
+/** A stroke set whose segments are replaced at run time: readouts, indicator lights. */
+export interface DynamicStrokes extends VectorStrokes {
+  /** the most segments one set() can hold; the rest of a longer batch is dropped */
+  readonly capacity: number;
+  /**
+   * Draw `count` segments from `segments` (six floats each, x0 y0 z0 x1 y1 z1) and
+   * nothing else. Allocation-free: the segments are copied into a buffer sized once.
+   */
+  set(segments: ArrayLike<number>, count: number): void;
+}
+
+/**
+ * A stroke set for things that change every frame. The fat-line buffer is allocated once
+ * at `capacity` segments and refilled in place, with instanceCount trimming the draw.
+ * Never frustum-culled: an empty set has no bounds to test, and these sets ride the
+ * camera anyway.
+ */
+export function createDynamicStrokes(capacity: number, color: THREE.ColorRepresentation): DynamicStrokes {
+  const fat = new LineSegmentsGeometry();
+  fat.setPositions(new Float32Array(Math.max(1, capacity) * 6));
+  fat.instanceCount = 0;
+  const buffer = (fat.getAttribute('instanceStart') as THREE.InterleavedBufferAttribute).data;
+  const array = buffer.array as Float32Array;
+  const set = buildTiers(fat, color);
+  for (const t of set.tiers) t.frustumCulled = false;
+  return Object.assign(set, {
+    capacity,
+    set(segments: ArrayLike<number>, count: number): void {
+      const n = Math.max(0, Math.min(count, capacity));
+      for (let i = 0; i < n * 6; i++) array[i] = segments[i]!;
+      buffer.needsUpdate = true;
+      fat.instanceCount = n;
+    },
+  });
+}
+
 /** A stroke set that hides its own back edges whole, by facing, instead of by depth. */
 export interface CulledStrokes extends VectorStrokes {
   /** Recompute which edges to draw for a camera at `eye` (world frame). Returns the count drawn. */

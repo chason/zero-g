@@ -96,7 +96,7 @@ function frame() {
     document.getElementById('hud')!.textContent =
       `SIM HALTED\n\n${halted}\n\nRun \`npm test\` — the failing tests are the spec.`;
   } else {
-    hud.draw(world);
+    hud.draw(world, renderer.view);
   }
 }
 

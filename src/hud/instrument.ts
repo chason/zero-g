@@ -1,6 +1,7 @@
 import type { PerspectiveCamera, Vector3 } from 'three';
 import type { World } from '../sim/world';
 import type { Ship } from '../sim/ship';
+import type { ViewMode } from '../render';
 
 /**
  * Everything an instrument may read. Instruments are read-only views of the
@@ -9,6 +10,8 @@ import type { Ship } from '../sim/ship';
 export interface HudContext {
   world: World;
   ship: Ship;
+  /** the renderer's view: in the cockpit the dash carries the readouts, so the screen copies hide */
+  view: ViewMode;
   /** the live render camera, for projecting world points onto the screen */
   camera: PerspectiveCamera;
   width: number;

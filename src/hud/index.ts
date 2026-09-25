@@ -1,4 +1,5 @@
 import type { PerspectiveCamera } from 'three';
+import type { ViewMode } from '../render';
 import type { World } from '../sim/world';
 import type { Instrument, HudContext } from './instrument';
 import { createRotation } from './instruments/rotation';
@@ -22,38 +23,63 @@ import { createSummary } from './instruments/summary';
  * ./instruments and is owned by its own issue; add new ones here, implement them there.
  */
 export interface Hud {
-  draw(world: World): void;
+  /** `view` is the renderer's: in the cockpit the dash carries the readouts (#54) */
+  draw(world: World, view?: ViewMode): void;
 }
 
+/**
+ * Instruments the cockpit's dash draws for itself (src/render/dash.ts). In cockpit view
+ * their screen copies are hidden; in chase view, with no dash, they show. The boresight,
+ * brackets, markers and summary track the world, so they stay on screen in both.
+ */
+export const DASH_BORNE = new Set(['rotation', 'velocity', 'propellant', 'thrusters']);
+
 export function createHud(root: HTMLElement, camera: PerspectiveCamera): Hud {
-  const instruments: Instrument[] = [
-    createRotation(),
-    createVelocity(),
-    createMarkers(),
-    createTarget(),
-    createPropellant(),
-    createThrusters(),
-    createBoresight(),
-    createSummary(),
-  ];
-  for (const inst of instruments) inst.mount(root);
+  const instruments: { name: string; inst: Instrument; box: HTMLElement }[] = [
+    { name: 'rotation', inst: createRotation() },
+    { name: 'velocity', inst: createVelocity() },
+    { name: 'markers', inst: createMarkers() },
+    { name: 'target', inst: createTarget() },
+    { name: 'propellant', inst: createPropellant() },
+    { name: 'thrusters', inst: createThrusters() },
+    { name: 'boresight', inst: createBoresight() },
+    { name: 'summary', inst: createSummary() },
+  ].map((entry) => {
+    // Each instrument mounts into a box of its own, so the registry can hide it without
+    // knowing its DOM. The box is unpositioned, so the instrument's own absolute
+    // placement still resolves against #hud.
+    const box = document.createElement('div');
+    box.className = 'inst-box inst-box-' + entry.name;
+    root.appendChild(box);
+    entry.inst.mount(box);
+    return { ...entry, box };
+  });
 
   const ctx: HudContext = {
     world: undefined as unknown as World,
     ship: undefined as unknown as HudContext['ship'],
+    view: 'chase',
     camera,
     width: innerWidth,
     height: innerHeight,
   };
   addEventListener('resize', () => { ctx.width = innerWidth; ctx.height = innerHeight; });
+  let shownFor: ViewMode | null = null;
 
   return {
-    draw(world: World) {
+    draw(world: World, view: ViewMode = 'chase') {
       const ship = world.ships[0];
       if (!ship) return;
       ctx.world = world;
       ctx.ship = ship;
-      for (const inst of instruments) inst.draw(ctx);
+      ctx.view = view;
+      if (view !== shownFor) {
+        shownFor = view;
+        for (const { name, box } of instruments) {
+          box.style.display = view === 'cockpit' && DASH_BORNE.has(name) ? 'none' : '';
+        }
+      }
+      for (const { inst } of instruments) inst.draw(ctx);
     },
   };
 }

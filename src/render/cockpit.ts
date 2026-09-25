@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { createVectorStrokes, type VectorStrokes } from './vector';
+import { createDash, type Dash } from './dash';
+import type { World } from '../sim/world';
 
 /**
  * The cockpit frame: what the pilot sees of their own ship from the seat. A few angular
@@ -32,8 +34,15 @@ export const DASH_SETBACK = 1.01;
  * past the camera's 0.1 m near plane.
  */
 export const COCKPIT_SCALE = 0.3;
+/**
+ * The dash solid sits this far behind the layout plane (in layout units, scaled about
+ * the eye so its outline on screen is unchanged): behind the instruments on the dash's
+ * face (dash.ts), which lean back from 0.95 to about 1.1, and still ahead of the nose
+ * thrusters once everything is drawn at COCKPIT_SCALE.
+ */
+export const DASH_SOLID_DEPTH = 1.2;
 /** Nearest and farthest the dash solid reaches from the eye, in metres, after scaling. */
-export const DASH_DEPTH: readonly [number, number] = [COCKPIT_SCALE, COCKPIT_SCALE];
+export const DASH_DEPTH: readonly [number, number] = [DASH_SOLID_DEPTH * COCKPIT_SCALE, DASH_SOLID_DEPTH * COCKPIT_SCALE];
 /** No stroke passes within this of the view axis, as a tangent (0.25 ≈ 14°). */
 export const CLEAR_TAN = 0.25;
 
@@ -83,8 +92,9 @@ export function cockpitStrokes(): Float32Array {
 }
 
 /**
- * The dash: DASH_OUTLINE as a fan of triangles, each facing the eye, pushed DASH_SETBACK
- * farther out so the strokes sit a hair in front of it.
+ * The dash: DASH_OUTLINE as a fan of triangles, each facing the eye, pushed out to
+ * DASH_SOLID_DEPTH (and DASH_SETBACK beyond) so the frame's strokes and the instruments
+ * both sit in front of it.
  */
 export function dashGeometry(): THREE.BufferGeometry {
   const tris: number[] = [];
@@ -104,16 +114,28 @@ export function dashGeometry(): THREE.BufferGeometry {
     }
   }
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(tris.map((v) => v * DASH_SETBACK), 3));
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(tris.map((v) => v * DASH_SETBACK * DASH_SOLID_DEPTH), 3));
   geometry.computeVertexNormals();
   return geometry;
 }
 
-/** The frame as a stroke set with the dash as its solid. Add `group` to the camera. */
-export function createCockpit(): { group: THREE.Group; strokes: VectorStrokes } {
+export interface Cockpit {
+  /** add to the camera: the frame, the dash solid and the instruments, all in its frame */
+  group: THREE.Group;
+  strokes: VectorStrokes;
+  /** the instruments on the dash (#54) */
+  dash: Dash;
+  /** refresh the instruments from the world; call once per frame while the cockpit shows */
+  update(world: World): void;
+}
+
+/** The frame as a stroke set with the dash as its solid, and the instruments on it. */
+export function createCockpit(): Cockpit {
   const strokes = createVectorStrokes(cockpitStrokes(), COCKPIT_COLOR);
   strokes.setOccluder(dashGeometry());
   strokes.setFade(COCKPIT_FADE);
   strokes.group.scale.setScalar(COCKPIT_SCALE);
-  return { group: strokes.group, strokes };
+  const dash = createDash();
+  strokes.group.add(dash.group);
+  return { group: strokes.group, strokes, dash, update: (world) => dash.update(world) };
 }

@@ -18,7 +18,7 @@ const H = 600;
 function makeCtx(width = W, height = H): HudContext {
   const camera = new PerspectiveCamera(70, width / height, 0.1, 1e7);
   camera.updateMatrixWorld();
-  return { world: undefined as unknown as HudContext['world'], ship: undefined as unknown as HudContext['ship'], camera, width, height };
+  return { world: undefined as unknown as HudContext['world'], ship: undefined as unknown as HudContext['ship'], view: 'chase', camera, width, height };
 }
 
 function projected(x: number, y: number, behind = false): Projected {
