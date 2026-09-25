@@ -2,21 +2,37 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   cockpitStrokes, dashGeometry, createCockpit, COCKPIT_POLYLINES, COCKPIT_FADE, DASH_SETBACK, CLEAR_TAN,
+  COCKPIT_SCALE, DASH_DEPTH, DASH_OUTLINE, COAMING, LEFT_PILLAR, LEFT_SPAR,
 } from '../src/render/cockpit';
 import { GLOW_TIERS } from '../src/render/vector';
-import skiff from '../src/data/skiff.json';
-import { COCKPIT_SCALE, DASH_DEPTH } from '../src/render/cockpit';
 import { PLUME_LENGTH, PLUME_RADIUS, plumeScale } from '../src/render/plumes';
+import skiff from '../src/data/skiff.json';
 
 const TAN_HALF_V = Math.tan((70 * Math.PI) / 360); // the camera's vertical half-field
 const TAN_HALF_H = TAN_HALF_V * (16 / 9);
+/** a laid-out point as view tangents */
+const tan = (p: readonly [number, number, number]) => [p[0] / -p[2], p[1] / -p[2]] as const;
+const onScreen = (p: readonly [number, number, number]) => {
+  const [u, v] = tan(p);
+  return Math.abs(u) < TAN_HALF_H && Math.abs(v) < TAN_HALF_V;
+};
+/** the highest point of the dash's outline above a given horizontal tangent, or -Infinity past its ends */
+function dashTopAt(u: number): number {
+  let top = -Infinity;
+  for (let i = 0; i < DASH_OUTLINE.length; i++) {
+    const [u0, v0] = tan(DASH_OUTLINE[i]!), [u1, v1] = tan(DASH_OUTLINE[(i + 1) % DASH_OUTLINE.length]!);
+    if (u0 === u1 || u < Math.min(u0, u1) || u > Math.max(u0, u1)) continue;
+    top = Math.max(top, v0 + ((u - u0) / (u1 - u0)) * (v1 - v0));
+  }
+  return top;
+}
 
-describe('cockpit frame', () => {
+describe('cockpit frame (#51, #53)', () => {
   it('has one segment per polyline edge, every one ahead of the eye and past the near plane', () => {
     const seg = cockpitStrokes();
     const edges = COCKPIT_POLYLINES.reduce((n, line) => n + line.length - 1, 0);
     expect(seg.length).toBe(edges * 6);
-    for (let i = 2; i < seg.length; i += 3) expect(seg[i]).toBeLessThan(-0.1);
+    for (let i = 2; i < seg.length; i += 3) expect(seg[i]! * COCKPIT_SCALE).toBeLessThan(-0.1);
   });
 
   it('keeps the middle of the view clear for the boresight and the target', () => {
@@ -32,15 +48,34 @@ describe('cockpit frame', () => {
     }
   });
 
-  it('puts the top rail and the coaming on a 16:9 screen, and the side rails off it', () => {
-    const [topRail, coaming, , , , , , upperLeftRail] = COCKPIT_POLYLINES;
-    for (const p of [...topRail!, ...coaming!]) {
-      expect(Math.abs(p[1] / p[2])).toBeLessThan(TAN_HALF_V);
+  it('is the sketch: bent pillars off the top and bottom, spars off the sides, an open top, a raised dash', () => {
+    const [top, joint, corner, bottom] = LEFT_PILLAR;
+    expect(tan(top!)[1]).toBeGreaterThan(TAN_HALF_V); // enters from above the top edge
+    expect(onScreen(joint!)).toBe(true);
+    expect(tan(joint!)[1]).toBeGreaterThan(0); // the bend is above eye level
+    expect(tan(joint!)[0]).toBeGreaterThan(tan(top!)[0]); // and it is the pillar's innermost point
+    expect(tan(joint!)[0]).toBeGreaterThan(tan(corner!)[0]);
+    expect(onScreen(corner!)).toBe(true);
+    expect(tan(bottom!)[1]).toBeLessThan(-TAN_HALF_V); // leaves through the bottom
+    // the spar is level and leaves through the side
+    const [spar0, spar1] = LEFT_SPAR;
+    expect(spar0).toBe(joint);
+    expect(tan(spar1!)[1]).toBeCloseTo(tan(spar0!)[1], 9);
+    expect(Math.abs(tan(spar1!)[0])).toBeGreaterThan(TAN_HALF_H);
+    // no stroke crosses the upper middle: the view is open above
+    const seg = cockpitStrokes();
+    for (let i = 0; i < seg.length; i += 6) {
+      const [au, av] = tan([seg[i]!, seg[i + 1]!, seg[i + 2]!]);
+      const [bu, bv] = tan([seg[i + 3]!, seg[i + 4]!, seg[i + 5]!]);
+      const crossesUpperMiddle = Math.max(au, bu) > -0.3 && Math.min(au, bu) < 0.3 && Math.min(av, bv) > 0;
+      expect(crossesUpperMiddle).toBe(false);
     }
-    // the coaming's outer corners are just past the side edges: the frame wraps the screen
-    expect(Math.abs(coaming![0]![0] / coaming![0]![2])).toBeGreaterThan(TAN_HALF_H);
-    const railEnd = upperLeftRail![1]!;
-    expect(Math.abs(railEnd[0] / railEnd[2])).toBeGreaterThan(TAN_HALF_H * 3);
+    // the dash's edge rises from its corners to a level middle
+    const [c0, s0, s1, c1] = COAMING;
+    expect(tan(s0!)[1]).toBeGreaterThan(tan(c0!)[1]);
+    expect(tan(s0!)[1]).toBeCloseTo(tan(s1!)[1], 9);
+    expect(tan(c1!)[0]).toBeCloseTo(-tan(c0!)[0], 9);
+    expect(COAMING.every(onScreen)).toBe(true);
   });
 
   it('dash faces the eye, sits behind its strokes, and covers the bottom of the view', () => {
@@ -59,11 +94,13 @@ describe('cockpit frame', () => {
       }
     }
     expect(lowest).toBeLessThan(-TAN_HALF_V * 1.5);
-    // the coaming's first point, pushed out by the setback, is a dash vertex
-    const [E] = COCKPIT_POLYLINES[1]!;
+    // the whole width of the bottom edge is dash, on a 16:9 window
+    for (let u = -TAN_HALF_H; u <= TAN_HALF_H; u += 0.05) expect(dashTopAt(u)).toBeGreaterThan(-TAN_HALF_V);
+    // the dash's corner, pushed out by the setback, is a dash vertex
+    const [corner] = COAMING;
     let found = false;
     for (let i = 0; i < p.count; i++) {
-      if (Math.abs(p.getX(i) - E![0] * DASH_SETBACK) < 1e-6 && Math.abs(p.getY(i) - E![1] * DASH_SETBACK) < 1e-6) found = true;
+      if (Math.abs(p.getX(i) - corner![0] * DASH_SETBACK) < 1e-6 && Math.abs(p.getY(i) - corner![1] * DASH_SETBACK) < 1e-6) found = true;
     }
     expect(found).toBe(true);
     expect(DASH_SETBACK).toBeGreaterThan(1);
@@ -72,7 +109,6 @@ describe('cockpit frame', () => {
   it('draws the dash nearer than every forward thruster nozzle, and past the near plane (#52)', () => {
     const { group } = createCockpit();
     expect(group.scale.x).toBeCloseTo(COCKPIT_SCALE, 9);
-    // the dash's true depth range is the laid-out range times the scale
     const g = dashGeometry();
     const p = g.getAttribute('position');
     let nearest = Infinity, farthest = 0;
@@ -83,7 +119,6 @@ describe('cockpit frame', () => {
     expect(nearest).toBeGreaterThan(0.1); // the camera's near plane
     expect(nearest).toBeCloseTo(DASH_DEPTH[0] * DASH_SETBACK, 6);
     expect(farthest).toBeCloseTo(DASH_DEPTH[1] * DASH_SETBACK, 6);
-    // every thruster ahead of the seat starts its plume beyond the dash
     const seatZ = skiff.seatOffset[2]!;
     for (const t of skiff.thrusters) {
       const ahead = seatZ - t.position[2]!; // nose is -Z: positive means ahead of the eye
@@ -93,19 +128,9 @@ describe('cockpit frame', () => {
 
   it('hides every forward thruster plume of the skiff behind the dash, from the seat (#52)', () => {
     // The dash is nearer than the nozzles (above), so a plume is hidden wherever it
-    // projects inside the dash's outline: below the coaming, or below the dash's outer
-    // edge past the coaming's ends. Sample each forward plume's cone and check.
-    const [E, F, G, H] = COCKPIT_POLYLINES[1]!;
-    const floorCorner: [number, number, number] = [-3.2, -1.7, -0.78]; // dashGeometry's outer floor point
-    const tan = (p: readonly [number, number, number]) => [p[0] / -p[2], p[1] / -p[2]] as const;
-    const edge = [tan(floorCorner), tan(E!), tan(F!), tan(G!), tan(H!), tan([-floorCorner[0], floorCorner[1], floorCorner[2]])];
-    const dashTopAt = (u: number): number => {
-      for (let i = 0; i + 1 < edge.length; i++) {
-        const [u0, v0] = edge[i]!, [u1, v1] = edge[i + 1]!;
-        if (u >= Math.min(u0, u1) && u <= Math.max(u0, u1)) return v0 + ((u - u0) / (u1 - u0)) * (v1 - v0);
-      }
-      return -Infinity; // beyond the floor corners: nothing covers it
-    };
+    // projects inside the dash's outline. Sample each forward plume's cone and check every
+    // point that could be on a window up to 21:9.
+    const WIDEST = TAN_HALF_V * (21 / 9);
     const [sx, sy, sz] = skiff.seatOffset as [number, number, number];
     let maxThrust = 0;
     for (const t of skiff.thrusters) maxThrust = Math.max(maxThrust, t.thrust);
@@ -128,6 +153,7 @@ describe('cockpit frame', () => {
           const p = centre.clone().addScaledVector(a, r * Math.cos(th)).addScaledVector(b, r * Math.sin(th));
           if (p.z >= -0.05) continue; // behind or beside the eye: out of the field of view
           const u = p.x / -p.z, v = p.y / -p.z;
+          if (Math.abs(u) > WIDEST || Math.abs(v) > TAN_HALF_V) continue; // off any window
           expect(v, `${t.id} plume shows past the dash at (${u.toFixed(2)}, ${v.toFixed(2)})`).toBeLessThan(dashTopAt(u) - 0.02);
           checked++;
         }

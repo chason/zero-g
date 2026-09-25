@@ -3,14 +3,21 @@ import { createVectorStrokes, type VectorStrokes } from './vector';
 
 /**
  * The cockpit frame: what the pilot sees of their own ship from the seat. A few angular
- * struts laid out in the CAMERA's frame — x right, y up, the nose down -Z, metres from
- * the eye — so they ride the camera exactly; the hull itself stays hidden from inside.
+ * struts laid out in the CAMERA's frame — x right, y up, the nose down -Z — so they ride
+ * the camera exactly; the hull itself stays hidden from inside.
  *
- * Sized for a 16:9 window at the 70° vertical field: the top rail crosses just below the
- * top edge, the coaming (the dash's top edge) sits above the lower instruments, the front
- * pillars slant out through the sides, and the side rails only show on a wider window.
- * The middle of the view, where the boresight and the target live, is kept clear. Below
- * the coaming a solid dash hides the world, which is most of what makes it a cockpit.
+ * The shape (#53, from Chason's sketch): on each side a pillar bent inward at a joint a
+ * little above eye level, running from off the top edge down through the joint to the
+ * dash's corner and on out through the bottom corner; a horizontal spar from each joint
+ * out through the side edge; and between the two dash corners the dash's top edge, rising
+ * to a short flat in the middle. No top rail: the view is open above. Below the dash's
+ * edge and outside the lower pillars a solid hides the world, which is most of what makes
+ * it a cockpit. The middle of the view stays clear for the boresight and the target.
+ *
+ * Every point is laid out on the plane one metre ahead, as tangents of the view angles,
+ * so the numbers read directly as screen positions: on a 16:9 window at the 70° field the
+ * screen spans ±1.245 across and ±0.7 up. The frame is rigid to the camera, so depth
+ * changes nothing on screen; see COCKPIT_SCALE for why it is then drawn nearer.
  */
 export const COCKPIT_COLOR = 0x7a8a8c;
 /** Held well back: the frame is there, not looked at. */
@@ -18,53 +25,52 @@ export const COCKPIT_FADE = 0.32;
 /** The dash solid sits this factor farther from the eye than its strokes, so they stay on top. */
 export const DASH_SETBACK = 1.01;
 /**
- * The frame is laid out at about a metre and then drawn at this fraction of that. A scale
- * about the eye changes nothing on screen, but it puts the dash NEARER than anything on
- * the hull — the forward thruster nozzles are 0.4 m ahead of the seat — so their exhaust
- * is behind the dash where the dash covers it, instead of flaring in front of it (#52).
- * Still well past the camera's 0.1 m near plane.
+ * The frame is laid out at a metre and drawn at this fraction of that. A scale about the
+ * eye changes nothing on screen, but it puts the dash NEARER than anything on the hull —
+ * the forward thruster nozzles are 0.4 m ahead of the seat — so their exhaust is behind
+ * the dash where the dash covers it, instead of flaring in front of it (#52). Still well
+ * past the camera's 0.1 m near plane.
  */
 export const COCKPIT_SCALE = 0.3;
 /** Nearest and farthest the dash solid reaches from the eye, in metres, after scaling. */
-export const DASH_DEPTH: readonly [number, number] = [0.78 * COCKPIT_SCALE, 1.2 * COCKPIT_SCALE];
+export const DASH_DEPTH: readonly [number, number] = [COCKPIT_SCALE, COCKPIT_SCALE];
 /** No stroke passes within this of the view axis, as a tangent (0.25 ≈ 14°). */
 export const CLEAR_TAN = 0.25;
 
 export type Point = readonly [number, number, number];
+const at = (x: number, y: number): Point => [x, y, -1];
+const mirror = (p: Point): Point => [-p[0], p[1], p[2]];
 
-// Top rail, left to right: a shallow peak.
-const A: Point = [-1.05, 0.5, -1.05];
-const B: Point = [-0.42, 0.78, -1.25];
-const C: Point = [0.42, 0.78, -1.25];
-const D: Point = [1.05, 0.5, -1.05];
-// Coaming: the top edge of the dash, a chevron pushed toward the nose in the middle.
-const E: Point = [-1.2, -0.44, -0.9];
-const F: Point = [-0.45, -0.36, -1.2];
-const G: Point = [0.45, -0.36, -1.2];
-const H: Point = [1.2, -0.44, -0.9];
-// The dash's front edge, lower and nearer: the slab has thickness.
-const E2: Point = [-1.2, -0.58, -0.78];
-const F2: Point = [-0.45, -0.5, -1.05];
-const G2: Point = [0.45, -0.5, -1.05];
-const H2: Point = [1.2, -0.58, -0.78];
-// Side rails run back past the eye and out of view.
-const I: Point = [-1.75, 0.42, -0.25];
-const J: Point = [-1.9, -0.6, -0.2];
-const I2: Point = [1.75, 0.42, -0.25];
-const J2: Point = [1.9, -0.6, -0.2];
+// Left side, top to bottom. The right side is its mirror.
+const TOP = at(-1.16, 0.77); // off the top edge
+const JOINT = at(-0.65, 0.15); // the pillar's inward bend, a little above eye level
+const SPAR_END = at(-1.35, 0.15); // off the side edge
+const DASH_CORNER = at(-0.96, -0.37);
+const BOTTOM = at(-1.45, -0.77); // off the bottom corner
+const SHOULDER = at(-0.11, -0.252); // where the dash's edge levels off
+
+export const LEFT_PILLAR: readonly Point[] = [TOP, JOINT, DASH_CORNER, BOTTOM];
+export const LEFT_SPAR: readonly Point[] = [JOINT, SPAR_END];
+/** The dash's top edge, left to right. */
+export const COAMING: readonly Point[] = [DASH_CORNER, SHOULDER, mirror(SHOULDER), mirror(DASH_CORNER)];
 
 export const COCKPIT_POLYLINES: readonly (readonly Point[])[] = [
-  [A, B, C, D], // top rail
-  [E, F, G, H], // coaming
-  [E2, F2, G2, H2], // dash front edge
-  [A, E], // front pillars
-  [D, H],
-  [F, F2], // the dash's two front corners
-  [G, G2],
-  [A, I], // side rails
-  [E, J],
-  [D, I2],
-  [H, J2],
+  LEFT_PILLAR,
+  LEFT_PILLAR.map(mirror),
+  LEFT_SPAR,
+  LEFT_SPAR.map(mirror),
+  COAMING,
+];
+
+/**
+ * The dash solid's outline, counter-clockwise as seen from the seat: along the floor,
+ * up the right lower pillar, across the coaming, down the left. The floor corners are
+ * flung far out and down so that, on any window, the exhaust of the nose thrusters —
+ * which sit below and ahead of the seat — is under the dash wherever it could be seen.
+ */
+const FLOOR = at(-4, -2.85);
+export const DASH_OUTLINE: readonly Point[] = [
+  FLOOR, mirror(FLOOR), mirror(BOTTOM), mirror(DASH_CORNER), mirror(SHOULDER), SHOULDER, DASH_CORNER, BOTTOM,
 ];
 
 /** Flat xyz pairs, one segment per polyline edge. */
@@ -76,33 +82,20 @@ export function cockpitStrokes(): Float32Array {
   return new Float32Array(out);
 }
 
-/** Two triangles per quad between matching points of two polylines. */
-function strip(top: readonly Point[], bottom: readonly Point[], out: number[]): void {
-  for (let i = 0; i + 1 < top.length; i++) {
-    out.push(...top[i]!, ...top[i + 1]!, ...bottom[i + 1]!);
-    out.push(...top[i]!, ...bottom[i + 1]!, ...bottom[i]!);
-  }
-}
-
 /**
- * The dash: a solid from the coaming down and out past the bottom of any window, facing
- * the eye. Built from the same points as the strokes, then pushed DASH_SETBACK farther
- * out, so the strokes sit a centimetre in front of it.
+ * The dash: DASH_OUTLINE as a fan of triangles, each facing the eye, pushed DASH_SETBACK
+ * farther out so the strokes sit a hair in front of it.
  */
 export function dashGeometry(): THREE.BufferGeometry {
   const tris: number[] = [];
-  strip([E, F, G, H], [E2, F2, G2, H2], tris); // the top slab
-  // The front face drops to a floor whose corners are flung wide, so the bottom corners
-  // of a wide window are covered too.
-  const floor: Point[] = [[-3.2, -1.7, -0.78], [-1.2, -1.7, -1.05], [1.2, -1.7, -1.05], [3.2, -1.7, -0.78]];
-  strip([E2, F2, G2, H2], floor, tris);
+  const [first] = DASH_OUTLINE;
+  for (let i = 1; i + 1 < DASH_OUTLINE.length; i++) tris.push(...first!, ...DASH_OUTLINE[i]!, ...DASH_OUTLINE[i + 1]!);
   // Every triangle must face the eye at the origin: the occluder material culls back faces.
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
   for (let i = 0; i < tris.length; i += 9) {
     a.fromArray(tris, i); b.fromArray(tris, i + 3); c.fromArray(tris, i + 6);
     n.crossVectors(b.clone().sub(a), c.clone().sub(a));
     if (n.dot(a) > 0) {
-      // normal points away from the eye: swap b and c
       for (let k = 0; k < 3; k++) {
         const t = tris[i + 3 + k]!;
         tris[i + 3 + k] = tris[i + 6 + k]!;
