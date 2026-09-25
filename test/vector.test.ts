@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import {
   edgeSegmentCount, createVectorLines, createVectorStrokes, torusStrokes,
   projectedRadiusPx, farFade,
-  GLOW_TIERS, CORE_WHITE, CREASE_DEG, FAR_MIN_OPACITY, FAR_FADE_PX,
+  GLOW_TIERS, CORE_WHITE, CREASE_DEG, FAR_MIN_OPACITY, FAR_FADE_PX, OCCLUDER_SHRINK,
+  cylinderOccluder, hullOccluder, portOccluder, asteroidGeometry, asteroidStrokes,
 } from '../src/render/vector';
 import { BLOOM_STRENGTH, PHOSPHOR_DECAY } from '../src/render/post';
 
@@ -22,6 +23,60 @@ describe('vector strokes', () => {
       const x = seg[i]!, y = seg[i + 1]!, z = seg[i + 2]!;
       expect(Math.hypot(Math.hypot(x, y) - 3, z)).toBeCloseTo(0.18, 5);
     }
+  });
+});
+
+describe('hidden lines: every solid carries a depth-only occluder', () => {
+  const extent = (g: THREE.BufferGeometry) => {
+    g.computeBoundingSphere();
+    return g.boundingSphere!.radius;
+  };
+
+  it('a mesh-derived stroke set gets its own geometry back, shrunk, writing depth and no colour', () => {
+    const cone = new THREE.ConeGeometry(1.2, 5, 12);
+    const s = createVectorLines(cone, 0x9fd9cc);
+    expect(s.occluder).not.toBeNull();
+    const m = s.occluder!.material as THREE.MeshBasicMaterial;
+    expect(m.colorWrite).toBe(false);
+    expect(m.depthWrite).toBe(true);
+    expect(m.depthTest).toBe(true);
+    expect(s.occluder!.renderOrder).toBeLessThan(Math.min(...s.tiers.map((t) => t.renderOrder)));
+    expect(extent(s.occluder!.geometry)).toBeCloseTo(extent(cone) * OCCLUDER_SHRINK, 6);
+    expect(OCCLUDER_SHRINK).toBeLessThan(1);
+    expect(OCCLUDER_SHRINK).toBeGreaterThan(0.98); // a hair inside, not visibly smaller
+    s.dispose();
+  });
+
+  it('parametric occluders sit just inside their strokes', () => {
+    const cyl = cylinderOccluder(10, 20, 60);
+    cyl.computeBoundingBox();
+    const b = cyl.boundingBox!;
+    expect(b.max.x).toBeCloseTo(10 * OCCLUDER_SHRINK, 5);
+    expect(b.min.z).toBeGreaterThan(20);
+    expect(b.max.z).toBeLessThan(60);
+    expect((b.min.z + b.max.z) / 2).toBeCloseTo(40, 6);
+
+    const hull = hullOccluder([{ radius: 5, from: 0, to: 10 }, { radius: 8, from: 10, to: 30 }], new Set([1]));
+    hull.computeBoundingBox();
+    expect(hull.boundingBox!.max.x).toBeCloseTo(5 * OCCLUDER_SHRINK, 5); // section 1 skipped
+
+    // the port's hole must stay a hole: no geometry inside the ring's inner radius at the plane
+    const port = portOccluder(3, 0.18, 1.5);
+    const p = port.getAttribute('position');
+    let minInPlane = Infinity;
+    for (let i = 0; i < p.count; i++) {
+      if (Math.abs(p.getZ(i)) < 0.2) minInPlane = Math.min(minInPlane, Math.hypot(p.getX(i), p.getY(i)));
+    }
+    expect(minInPlane).toBeGreaterThan(3 - 0.18 - 1e-6);
+
+    // the rock's solid is the same rock its edges came from: same farthest point
+    const solid = asteroidGeometry(10, 77);
+    const edges = asteroidStrokes(10, 77);
+    let maxEdge = 0, maxSolid = 0;
+    for (let i = 0; i < edges.length; i += 3) maxEdge = Math.max(maxEdge, Math.hypot(edges[i]!, edges[i + 1]!, edges[i + 2]!));
+    const sp = solid.getAttribute('position');
+    for (let i = 0; i < sp.count; i++) maxSolid = Math.max(maxSolid, Math.hypot(sp.getX(i), sp.getY(i), sp.getZ(i)));
+    expect(maxSolid).toBeCloseTo(maxEdge, 4);
   });
 });
 

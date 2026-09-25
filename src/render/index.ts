@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { OCCLUDER_SHRINK, createVectorLines, createVectorStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidStrokes, hullOccluder, cylinderOccluder, portOccluder, asteroidGeometry, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -102,6 +102,7 @@ export function createRenderer(): Renderer {
       if (targetMeshes.has(target)) continue;
       const isAssigned = i === assigned;
       const strokes = createVectorStrokes(portStrokes(target.radius, target.tube, target.collar), isAssigned ? RING_COLOR : PORT_COLOR);
+      strokes.setOccluder(portOccluder(target.radius, target.tube, target.collar));
       scene.add(strokes.group);
       targetMeshes.set(target, { strokes, assigned: isAssigned });
     }
@@ -119,11 +120,14 @@ export function createRenderer(): Renderer {
       const group = new THREE.Group();
       const fixed = createVectorStrokes(hullStrokes(structure.hull, 12, 12, 10, turningIdx), HULL_COLOR);
       fixed.setFade(HULL_FADE);
+      fixed.setOccluder(hullOccluder(structure.hull, turningIdx));
       group.add(fixed.group);
       const turning: StructureMesh['turning'] = [];
       for (const index of turningIdx) {
-        const strokes = createVectorStrokes(sectionStrokes(structure.hull[index]!), HULL_COLOR);
+        const sec = structure.hull[index]!;
+        const strokes = createVectorStrokes(sectionStrokes(sec), HULL_COLOR);
         strokes.setFade(HULL_FADE);
+        strokes.setOccluder(cylinderOccluder(sec.radius, sec.from, sec.to));
         group.add(strokes.group);
         turning.push({ index, strokes });
       }
@@ -140,6 +144,7 @@ export function createRenderer(): Renderer {
     for (const obstacle of obstacles) {
       if (obstacleMeshes.has(obstacle)) continue;
       const strokes = createVectorStrokes(asteroidStrokes(obstacle.radius, obstacle.seed), ROCK_COLOR);
+      strokes.setOccluder(asteroidGeometry(obstacle.radius * OCCLUDER_SHRINK, obstacle.seed));
       strokes.group.position.copy(obstacle.position as unknown as THREE.Vector3);
       strokes.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
       scene.add(strokes.group);
