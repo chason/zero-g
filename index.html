@@ -79,6 +79,21 @@
       /* the row that broke a docking limit */
       #hud .inst-summary .sum-over { color: #ffb347; font-weight: 700; }
       #hud .inst-summary .sum-hint { margin-top: 12px; opacity: .55; letter-spacing: .08em; }
+      #hud .inst-boresight { inset: 0; }
+      #hud .inst-boresight .bore-ring {
+        position: absolute; left: -9px; top: -9px; width: 16px; height: 16px;
+        border: 1px solid rgba(127,212,193,.85); border-radius: 50%;
+        box-shadow: 0 0 4px rgba(0,0,0,.9);
+      }
+      #hud .inst-boresight .bore-ring::after {
+        content: ''; position: absolute; left: 7px; top: 7px; width: 2px; height: 2px;
+        background: rgba(127,212,193,.85);
+      }
+      #hud .inst-boresight .bore-text {
+        position: absolute; left: 50%; top: calc(50% + 22px); transform: translateX(-50%);
+        opacity: .8; letter-spacing: .04em;
+      }
+      #hud .inst-boresight .bore-text.bore-aligned { color: #b8ffd9; opacity: 1; }
     </style>
   </head>
   <body>

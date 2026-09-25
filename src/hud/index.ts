@@ -7,6 +7,7 @@ import { createMarkers } from './instruments/markers';
 import { createTarget } from './instruments/target';
 import { createPropellant } from './instruments/propellant';
 import { createThrusters } from './instruments/thrusters';
+import { createBoresight } from './instruments/boresight';
 import { createSummary } from './instruments/summary';
 
 /**
@@ -32,6 +33,7 @@ export function createHud(root: HTMLElement, camera: PerspectiveCamera): Hud {
     createTarget(),
     createPropellant(),
     createThrusters(),
+    createBoresight(),
     createSummary(),
   ];
   for (const inst of instruments) inst.mount(root);
