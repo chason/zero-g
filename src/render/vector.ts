@@ -18,6 +18,12 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
  * whatever is there, so density always becomes halo, and a distant ring becomes a sun.
  * Nor does this need level-of-detail switching, and so nothing pops. Issue #39.
  *
+ * Fat lines draw each segment as its own quad with round caps, so at every joint two
+ * caps overlap. A translucent band blended twice is brighter than once, which put a
+ * bead at every vertex. Each tier therefore stencils itself: a pixel may be touched by
+ * a given tier of a given stroke set once per frame and no more (#40). The render target
+ * must carry a stencil buffer for this to do anything — see post.ts.
+ *
  * Only silhouette and crease edges are drawn (EdgesGeometry), not triangle wireframes:
  * a cone is twelve spokes and a rim, not a fan of diagonals.
  */
@@ -48,6 +54,20 @@ export const FAR_MIN_PX = 2;
 const materials = new Set<LineMaterial>();
 const resolution = new THREE.Vector2(1, 1);
 
+/**
+ * Stencil references. Each stroke set takes a block of GLOW_TIERS.length consecutive
+ * values so its tiers never collide with each other or with another set's; the 8-bit
+ * buffer wraps after ~50 sets, which only matters if two sets that far apart overlap
+ * on screen in the same frame.
+ */
+let nextStencilBase = 1;
+export function allocateStencilBase(): number {
+  const base = nextStencilBase;
+  nextStencilBase += GLOW_TIERS.length;
+  if (nextStencilBase + GLOW_TIERS.length > 255) nextStencilBase = 1;
+  return base;
+}
+
 /** Fat lines need the drawing-buffer size to scale their width; call on every resize. */
 export function setVectorResolution(width: number, height: number): void {
   resolution.set(width, height);
@@ -77,6 +97,7 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
   const tiers: LineSegments2[] = [];
   const base = new THREE.Color(color);
   const core = base.clone().lerp(new THREE.Color(0xffffff), CORE_WHITE);
+  const stencilBase = allocateStencilBase();
   GLOW_TIERS.forEach(([width, opacity], i) => {
     const material = new LineMaterial({
       color: i === 0 ? core : base,
@@ -87,6 +108,14 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
       blending: THREE.NormalBlending,
       depthWrite: false,
     });
+    // Draw where the stencil is not yet this tier's value, then stamp it: one blend
+    // per pixel per tier, so overlapping caps at a joint cannot double up.
+    material.stencilWrite = true;
+    material.stencilRef = stencilBase + i;
+    material.stencilFunc = THREE.NotEqualStencilFunc;
+    material.stencilFail = THREE.KeepStencilOp;
+    material.stencilZFail = THREE.KeepStencilOp;
+    material.stencilZPass = THREE.ReplaceStencilOp;
     material.resolution.copy(resolution);
     materials.add(material);
     const lines = new LineSegments2(fat, material);

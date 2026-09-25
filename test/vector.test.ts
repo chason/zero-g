@@ -58,6 +58,28 @@ describe('the glow is in the stroke, not a blur', () => {
     s.dispose();
   });
 
+  it('stencils each tier so a joint blends once: no bead where two caps overlap', () => {
+    const a = createVectorStrokes(torusStrokes(3, 0.18), 0xffb347);
+    const b = createVectorLines(new THREE.ConeGeometry(1, 2, 8), 0x9fd9cc);
+    const refs = (s: typeof a) => s.tiers.map((t) => (t.material as any).stencilRef as number);
+    for (const set of [a, b]) {
+      for (const t of set.tiers) {
+        const m = t.material as any;
+        expect(m.stencilWrite).toBe(true);
+        expect(m.stencilFunc).toBe(THREE.NotEqualStencilFunc);
+        expect(m.stencilZPass).toBe(THREE.ReplaceStencilOp);
+      }
+      // every tier of a set has its own reference value
+      expect(new Set(refs(set)).size).toBe(GLOW_TIERS.length);
+    }
+    // and two sets never share one, so one object's halo cannot mask another's
+    const all = [...refs(a), ...refs(b)];
+    expect(new Set(all).size).toBe(all.length);
+    expect(Math.max(...all)).toBeLessThan(256);
+    a.dispose();
+    b.dispose();
+  });
+
   it('fades all tiers together and never below the floor for a distant object', () => {
     const s = createVectorStrokes(torusStrokes(3, 0.18), 0xffb347);
     s.setFade(0.5);
