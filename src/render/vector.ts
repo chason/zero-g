@@ -124,6 +124,88 @@ export function createVectorStrokes(segments: Float32Array, color: THREE.ColorRe
   return lines;
 }
 
+// ---------------------------------------------------------------------------------------
+// Level of detail. A vector display cannot draw fewer strokes as a thing recedes, but it
+// should: a torus 400 m away is a circle, and drawing all 340 segments of it inside a
+// five-pixel disc gives the bloom a solid blob to spread. Levels switch on the ring's
+// projected radius in pixels, and the strokes fade as the ring gets small so a distant
+// target is a dim mark, not a sun.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Projected TUBE radius (px) at which each ring level becomes the one drawn. Keyed on
+ * the tube, not the ring: hoops around the tube only read once the tube itself is a
+ * few pixels wide; before that they pile into a solid band that blooms like a sun.
+ */
+export const RING_LOD_TUBE_PX: readonly [number, number, number] = [0, 2.5, 12];
+/** Below this projected radius the strokes start to fade; at RING_FADE_MIN_PX they are dimmest. */
+export const RING_FADE_PX = 10;
+export const RING_FADE_MIN_PX = 2;
+/** Dimmest a distant ring is allowed to get; it must stay findable. */
+export const RING_MIN_OPACITY = 0.35;
+
+/** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */
+export function projectedRadiusPx(radius: number, distance: number, fovDeg: number, viewportHeightPx: number): number {
+  if (distance <= 0) return Infinity;
+  const focal = viewportHeightPx / 2 / Math.tan((fovDeg * Math.PI) / 360);
+  return (radius / distance) * focal;
+}
+
+/** Which of the three ring levels to draw for a projected TUBE radius. */
+export function ringLodLevel(tubePx: number): 0 | 1 | 2 {
+  if (tubePx >= RING_LOD_TUBE_PX[2]) return 2;
+  if (tubePx >= RING_LOD_TUBE_PX[1]) return 1;
+  return 0;
+}
+
+/** Stroke opacity for a projected radius: full when large, dimming toward the minimum when tiny. */
+export function ringOpacity(px: number): number {
+  if (px >= RING_FADE_PX) return 1;
+  const t = Math.max(0, (px - RING_FADE_MIN_PX) / (RING_FADE_PX - RING_FADE_MIN_PX));
+  return RING_MIN_OPACITY + (1 - RING_MIN_OPACITY) * t;
+}
+
+export interface VectorRing {
+  group: THREE.Group;
+  /** far: one circle; mid: outer+inner circles and a few hoops; near: the full lattice */
+  levels: [LineSegments2, LineSegments2, LineSegments2];
+  /** Pick the level and opacity for this frame from the ring's projected radius; allocation-free. */
+  update(projectedRingPx: number): void;
+  dispose(): void;
+}
+
+export function createVectorRing(radius: number, tube: number, color: THREE.ColorRepresentation): VectorRing {
+  const levels: [LineSegments2, LineSegments2, LineSegments2] = [
+    createVectorStrokes(torusStrokes(radius, tube, 0, 1, 8, 48), color),
+    createVectorStrokes(torusStrokes(radius, tube, 8, 2, 8, 48), color),
+    createVectorStrokes(torusStrokes(radius, tube, 16, 4, 8, 48), color),
+  ];
+  const tubeRatio = tube / radius;
+  const group = new THREE.Group();
+  for (const l of levels) group.add(l);
+  let shown = -1;
+  let lastOpacity = -1;
+  return {
+    group,
+    levels,
+    update(px) {
+      const level = ringLodLevel(px * tubeRatio);
+      if (level !== shown) {
+        for (let i = 0; i < 3; i++) levels[i]!.visible = i === level;
+        shown = level;
+      }
+      const opacity = ringOpacity(px);
+      if (opacity !== lastOpacity) {
+        (levels[level].material as LineMaterial).opacity = opacity;
+        lastOpacity = opacity;
+      }
+    },
+    dispose() {
+      for (const l of levels) disposeVectorLines(l);
+    },
+  };
+}
+
 export function disposeVectorLines(lines: LineSegments2): void {
   lines.geometry.dispose();
   const m = lines.material as LineMaterial;

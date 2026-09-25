@@ -90,3 +90,9 @@ function frame() {
 }
 
 requestAnimationFrame(frame);
+
+// Dev only: a handle for poking the running sim from the console — teleport the ship,
+// read the world, tune a constant. Stripped from production builds by Vite.
+if (import.meta.env.DEV) {
+  (window as unknown as { zeroG: unknown }).zeroG = { world, ship: skiff, renderer, resetRun: () => resetRun(world) };
+}
