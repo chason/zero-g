@@ -199,28 +199,31 @@ describe('the hull blocks the far side', () => {
 });
 
 describe('turning sections', () => {
-  it('the refinery turns at its data rate, its outer drums the other way and faster, nothing else moves, and it freezes with the run (#57)', () => {
+  it('the refinery turns at its data rate, the bow and drive the other way and faster, nothing else moves, and it freezes with the run (#57)', () => {
     const world = capitalWorld();
     withShip(world, RING.clone().addScaledVector(OPEN, 100));
     const s = world.structures[0]!;
     const i = s.hull.findIndex((h) => h.label === 'refinery');
     expect(s.hull[i]!.spinDegPerSec).toBe(6);
-    // the drums either side of it are the same radius, so the seams show the counter-rotation
-    const drums = [i - 1, i + 1];
-    for (const d of drums) {
-      expect(s.hull[d]!.label).toMatch(/refinery .* drum/);
-      expect(s.hull[d]!.radius).toBe(s.hull[i]!.radius);
-      expect(Math.sign(s.hull[d]!.spinDegPerSec!)).toBe(-Math.sign(s.hull[i]!.spinDegPerSec!));
-      expect(Math.abs(s.hull[d]!.spinDegPerSec!)).toBeGreaterThan(Math.abs(s.hull[i]!.spinDegPerSec!));
-      expect(Math.abs(s.hull[d]!.spinDegPerSec!)).toBeLessThan(2 * Math.abs(s.hull[i]!.spinDegPerSec!)); // slightly faster, not a blur
+    // the skinny end sections past the ports counter-rotate, a little faster than the refinery
+    const ends = [s.hull.findIndex((h) => h.label === 'bow'), s.hull.findIndex((h) => h.label === 'drive')];
+    for (const e of ends) {
+      expect(e).toBeGreaterThanOrEqual(0);
+      expect(s.hull[e]!.radius).toBeLessThan(s.hull[i]!.radius);
+      expect(Math.sign(s.hull[e]!.spinDegPerSec!)).toBe(-Math.sign(s.hull[i]!.spinDegPerSec!));
+      expect(Math.abs(s.hull[e]!.spinDegPerSec!)).toBeGreaterThan(Math.abs(s.hull[i]!.spinDegPerSec!));
+      expect(Math.abs(s.hull[e]!.spinDegPerSec!)).toBeLessThan(2 * Math.abs(s.hull[i]!.spinDegPerSec!)); // slightly faster, not a blur
     }
-    expect(s.hull[i - 1]!.to).toBe(s.hull[i]!.from);
-    expect(s.hull[i + 1]!.from).toBe(s.hull[i]!.to);
+    // no port sits on a turning section: the sections that carry them stay still
+    for (const p of cspec.ports) {
+      const on = s.hull.find((h) => p.position[2] >= h.from && p.position[2] <= h.to)!;
+      expect(on.spinDegPerSec ?? 0).toBe(0);
+    }
     expect(s.spinAngle.every((a) => a === 0)).toBe(true);
     run(world, 120); // one second
     expect(s.spinAngle[i]).toBeCloseTo((6 * Math.PI) / 180, 6);
-    for (const d of drums) expect(s.spinAngle[d]).toBeCloseTo((s.hull[d]!.spinDegPerSec! * Math.PI) / 180, 6);
-    s.spinAngle.forEach((a, k) => { if (k !== i && !drums.includes(k)) expect(a).toBe(0); });
+    for (const e of ends) expect(s.spinAngle[e]).toBeCloseTo((s.hull[e]!.spinDegPerSec! * Math.PI) / 180, 6);
+    s.spinAngle.forEach((a, k) => { if (k !== i && !ends.includes(k)) expect(a).toBe(0); });
     // a turning cylinder is the same cylinder to the strike test
     const inside = new Vector3(20, 0, 170).applyQuaternion(s.orientation).add(s.position);
     expect(structureStrike(s, inside, R)).toBe('refinery');
