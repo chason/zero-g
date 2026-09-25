@@ -14,8 +14,11 @@ const hud = createHud(document.getElementById('hud')!, renderer.camera);
 // file via createShip — nothing about the ship is hardcoded here.
 const skiff = createShip(skiffSpec as ShipSpec);
 const world: World = createWorld([skiff]);
-// Placeholder so the HUD has something to point at while #25 builds the real ring.
-// 400 m dead ahead, stationary. #25 replaces this; nothing else should depend on it.
+// The docking ring (#25): 400 m dead ahead of the starting pose, stationary, 3 m contact
+// radius around its centre. The sim tests the ship's docking port against that radius
+// and records the first contact; the renderer draws a torus of the same radius so what
+// the pilot flies at is exactly what the sim judges. Its axis faces the origin, so the
+// approach is straight down -Z from where the Skiff starts.
 world.targets.push({ name: 'ring', position: new Vector3(0, 0, -400), velocity: new Vector3(), radius: 3 });
 world.selected = 0;
 // One throttle slot per thruster on the ship we actually loaded. Reused every frame:

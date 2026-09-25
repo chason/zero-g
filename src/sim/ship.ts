@@ -23,6 +23,13 @@ export interface ShipSpec {
   inertia: [number, number, number];
   /** where the pilot sits, relative to the centre of mass. Tuning dial for g tolerance. */
   seatOffset: [number, number, number];
+  /**
+   * The docking port, relative to the centre of mass, body frame. Contact with a target is
+   * decided at this point, not at the centre of mass, so it belongs on the nose: the hull
+   * the pilot is looking down is what has to arrive in the ring. Data, not a constant, for
+   * the same reason as the thruster geometry — a refit that moves it must not need code.
+   */
+  dockingPort: [number, number, number];
   /** kg of propellant in the tanks when full */
   propellantCapacity: number;
   thrusters: ThrusterSpec[];
@@ -50,10 +57,12 @@ export interface Pilot {
   health: number;
   /** current felt acceleration at the seat, in g */
   gLoad: number;
+  /** highest gLoad seen this run, for the run summary (#26). Never falls. */
+  peakG: number;
 }
 
 export function createPilot(): Pilot {
-  return { reserve: 1, health: 1, gLoad: 0 };
+  return { reserve: 1, health: 1, gLoad: 0, peakG: 0 };
 }
 
 export interface Ship {
@@ -171,6 +180,18 @@ export function massFlow(ship: Ship): number {
 /** Current total mass. Never hardcode this — cargo and propellant both move it. */
 export function currentMass(ship: Ship): number {
   return ship.spec.dryMass + ship.propellant;
+}
+
+/**
+ * World position of the ship's docking port: the body-frame offset from the spec rotated
+ * by the current orientation and added to the centre of mass. Writes only `out` and
+ * allocates nothing, so the contact check in world.step can call it every tick.
+ * The offset is re-read from the spec each call rather than cached, for the same
+ * reason the seat is: a refit must be honoured without a cache to forget.
+ */
+export function dockingPortPosition(ship: Ship, out: Vector3): Vector3 {
+  const [x, y, z] = ship.spec.dockingPort;
+  return out.set(x, y, z).applyQuaternion(ship.body.orientation).add(ship.body.position);
 }
 
 /**

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { World } from '../sim/world';
+import type { World, Target } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
 
@@ -24,6 +24,10 @@ export interface Renderer {
 const DUST_COUNT = 1200;
 const DUST_BOX = 240;
 
+/** Ring tube radius, metres. Thin enough to read as a hoop, thick enough to survive 400 m. */
+const RING_TUBE = 0.18;
+const RING_COLOR = 0xffb347;
+
 export function createRenderer(): Renderer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -42,6 +46,40 @@ export function createRenderer(): Renderer {
   scene.add(ship);
   const plumes = createPlumes(scene, ship);
   const post = createPostProcess(renderer);
+
+  // Targets (#25). One torus per entry in world.targets, keyed by the Target object so a
+  // list that is replaced wholesale still maps to the same meshes. Geometry is allocated
+  // only when a target appears and disposed only when it leaves; the per-frame path just
+  // copies transforms. An unlit material is the right choice for an emissive hoop in
+  // space: there are no lights in this scene to react to.
+  const targetMeshes = new Map<Target, THREE.Mesh>();
+  const origin = new THREE.Vector3();
+
+  function syncTargets(targets: Target[]): void {
+    // Cheap membership check first, so the steady state touches nothing.
+    let dirty = targetMeshes.size !== targets.length;
+    for (let i = 0; !dirty && i < targets.length; i++) dirty = !targetMeshes.has(targets[i]!);
+    if (!dirty) return;
+
+    for (const [target, mesh] of targetMeshes) {
+      if (targets.includes(target)) continue;
+      scene.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+      targetMeshes.delete(target);
+    }
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
+      if (targetMeshes.has(target)) continue;
+      // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
+      const mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(target.radius, RING_TUBE, 8, 48),
+        new THREE.MeshBasicMaterial({ color: RING_COLOR, wireframe: true }),
+      );
+      scene.add(mesh);
+      targetMeshes.set(target, mesh);
+    }
+  }
 
   // Local parallax field: the single most effective speed cue in the whole renderer.
   const dustPos = new Float32Array(DUST_COUNT * 3);
@@ -120,6 +158,20 @@ export function createRenderer(): Renderer {
       );
     }
     if (s) plumes.update(s);
+
+    // Targets are sim state too: position copied out every frame, never owned here. The
+    // torus lies in its local XY plane, so pointing its +Z at the world origin faces the
+    // hoop down the approach line from where the ship starts. lookAt is degenerate for a
+    // target sitting exactly on the origin; such a ring keeps whatever pose it had.
+    const { targets } = world;
+    syncTargets(targets);
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
+      const mesh = targetMeshes.get(target)!;
+      mesh.position.copy(target.position as unknown as THREE.Vector3);
+      if (mesh.position.lengthSq() > 0) mesh.lookAt(origin);
+    }
+
     post.render(scene, camera, world);
   }
 
