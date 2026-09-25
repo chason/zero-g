@@ -8,7 +8,7 @@ import {
 import { createShip, type ShipSpec, type Ship } from '../src/sim/ship';
 import { emptyCommand } from '../src/control';
 import { summaryFields, freshSummaryFields } from '../src/hud/instruments/summary';
-import { hullStrokes, sectionStrokes, portStrokes, cylinderStrokes } from '../src/render/vector';
+import { hullStrokes, sectionStrokes, portStrokes, cylinderStrokes, faceOwner } from '../src/render/vector';
 import skiff from '../src/data/skiff.json';
 import capital from '../src/data/capital.json';
 
@@ -262,12 +262,37 @@ describe('strokes', () => {
     for (let i = 2; i < withCollar.length; i += 3) minZ = Math.min(minZ, withCollar[i]!);
     expect(minZ).toBeCloseTo(-1.5, 6);
   });
-  it('a skipped section is left out of the hull buffer and drawn on its own', () => {
+  it('a skipped section is left out of the hull buffer and drawn on its own, with the faces it owns (#58)', () => {
     const all = hullStrokes(cspec.hull);
     const without = hullStrokes(cspec.hull, 12, 12, 10, new Set([2]));
-    const alone = sectionStrokes(cspec.hull[2]!);
+    const alone = sectionStrokes(cspec.hull, 2);
     expect(without.length).toBeLessThan(all.length);
     expect(without.length + alone.length).toBe(all.length);
+    // the refinery is the widest section, so both step faces beside it are its end caps:
+    // twelve spokes each, from the neighbour's radius to its own, in its own buffer
+    const refinery = cspec.hull[2]!;
+    const bare = sectionStrokes([refinery], 0);
+    expect(alone.length - bare.length).toBe(2 * 12 * 6);
+    let spokesFore = 0, spokesAft = 0;
+    for (let i = bare.length; i < alone.length; i += 6) {
+      const ra = Math.hypot(alone[i]!, alone[i + 1]!), rb = Math.hypot(alone[i + 3]!, alone[i + 4]!);
+      if (alone[i + 2] === refinery.from && Math.abs(ra - cspec.hull[1]!.radius) < 1e-6 && Math.abs(rb - refinery.radius) < 1e-6) spokesFore++;
+      if (alone[i + 2] === refinery.to && Math.abs(ra - refinery.radius) < 1e-6 && Math.abs(rb - cspec.hull[3]!.radius) < 1e-6) spokesAft++;
+    }
+    expect(spokesFore).toBe(12);
+    expect(spokesAft).toBe(12);
+    // the bow is the narrower side of its step, so that face is the forebody's and stays in the hull buffer
+    const bowAlone = sectionStrokes(cspec.hull, 0);
+    expect(bowAlone.length).toBe(sectionStrokes([cspec.hull[0]!], 0).length);
+    expect(faceOwner(cspec.hull, 0)).toBe(1);
+    expect(faceOwner(cspec.hull, 1)).toBe(2);
+    expect(faceOwner(cspec.hull, 2)).toBe(2);
+    expect(faceOwner(cspec.hull, 3)).toBe(3);
+    // and every section drawn alone plus the rest still makes the whole hull
+    const turning = new Set([0, 2, 4]);
+    let total = hullStrokes(cspec.hull, 12, 12, 10, turning).length;
+    for (const i of turning) total += sectionStrokes(cspec.hull, i).length;
+    expect(total).toBe(all.length);
   });
 
   it('the capital hull is one buffer along +Z with a sane stroke count', () => {
