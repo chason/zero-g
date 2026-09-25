@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
-import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { rng } from '../core/random';
 
 /**
@@ -64,6 +63,16 @@ function getOccluderMaterial(): THREE.MeshBasicMaterial {
   }
   return occluderMaterial;
 }
+// Same solid, but flagged transparent so it sorts into the blended queue with the strokes
+// and obeys renderOrder against them: an ordered set draws its strokes, THEN its solid, so
+// the solid hides only what comes later — never the set's own lines.
+let orderedOccluderMaterial: THREE.MeshBasicMaterial | null = null;
+function getOrderedOccluderMaterial(): THREE.MeshBasicMaterial {
+  if (!orderedOccluderMaterial) {
+    orderedOccluderMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true, side: THREE.FrontSide, transparent: true });
+  }
+  return orderedOccluderMaterial;
+}
 
 /** Distant strokes fade toward this floor so a far target is a mark, not a glare. */
 export const FAR_MIN_OPACITY = 0.5;
@@ -113,8 +122,17 @@ export interface VectorStrokes {
   setOccluder(geometry: THREE.BufferGeometry): void;
   /** scale every tier's opacity by 0..1 — used to fade distant objects; allocation-free */
   setFade(fade: number): void;
+  /**
+   * Place the whole set in the draw sequence: tiers at base..base+tiers-1 (widest first),
+   * the solid right after, so the solid never tests this set's own strokes. Sets that
+   * are ordered against each other should be given bases ORDER_STRIDE apart, nearest
+   * first, and a base below every unordered stroke set (which draw at -tiers+1..0).
+   */
+  setOrder(base: number): void;
   dispose(): void;
 }
+/** renderOrder values one ordered set spans: its tiers plus its solid. */
+export const ORDER_STRIDE = GLOW_TIERS.length + 1;
 
 function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation): VectorStrokes {
   const group = new THREE.Group();
@@ -150,6 +168,7 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
     tiers.push(lines);
   });
   let lastFade = 1;
+  let orderBase: number | null = null;
   const set: VectorStrokes = {
     group,
     tiers,
@@ -159,10 +178,20 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
         group.remove(set.occluder);
         set.occluder.geometry.dispose();
       }
-      const mesh = new THREE.Mesh(geometry, getOccluderMaterial());
-      mesh.renderOrder = -100; // before every stroke, so depth is there to test against
+      const mesh = new THREE.Mesh(geometry, orderBase === null ? getOccluderMaterial() : getOrderedOccluderMaterial());
+      // Unordered: an opaque solid, drawn before every stroke so depth is there to test
+      // against. Ordered: right after this set's own strokes.
+      mesh.renderOrder = orderBase === null ? -100 : orderBase + GLOW_TIERS.length;
       group.add(mesh);
       set.occluder = mesh;
+    },
+    setOrder(base) {
+      orderBase = base;
+      tiers.forEach((t, i) => { t.renderOrder = base + (GLOW_TIERS.length - 1 - i); });
+      if (set.occluder) {
+        set.occluder.material = getOrderedOccluderMaterial();
+        set.occluder.renderOrder = base + GLOW_TIERS.length;
+      }
     },
     setFade(fade) {
       const f = Math.max(0, Math.min(1, fade));
@@ -204,6 +233,113 @@ export function createVectorStrokes(segments: Float32Array, color: THREE.ColorRe
   const fat = new LineSegmentsGeometry();
   fat.setPositions(segments);
   return buildTiers(fat, color);
+}
+
+/**
+ * The edges EdgesGeometry would keep, plus what it throws away: the normals of the two
+ * faces each edge joins. `positions` is flat xyz pairs, `normals` the matching pair of
+ * unit normals per edge (a boundary edge repeats its one face). That pair is what
+ * whole-edge visibility needs — see `frontFacingEdges`.
+ */
+export interface CreaseEdges {
+  positions: Float32Array;
+  normals: Float32Array;
+  count: number;
+}
+
+export function creaseEdges(geometry: THREE.BufferGeometry, creaseDeg = CREASE_DEG): CreaseEdges {
+  const flat = geometry.index ? geometry.toNonIndexed() : geometry;
+  const pos = flat.getAttribute('position');
+  const thresholdDot = Math.cos((creaseDeg * Math.PI) / 180);
+  const precision = 1e4;
+  const keyOf = (i: number) =>
+    `${Math.round(pos.getX(i) * precision)},${Math.round(pos.getY(i) * precision)},${Math.round(pos.getZ(i) * precision)}`;
+  interface Edge { a: number; b: number; n0: THREE.Vector3; n1: THREE.Vector3 | null }
+  const edges = new Map<string, Edge>();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i); b.fromBufferAttribute(pos, i + 1); c.fromBufferAttribute(pos, i + 2);
+    const n = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a));
+    if (n.lengthSq() === 0) continue; // degenerate face
+    n.normalize();
+    const keys = [keyOf(i), keyOf(i + 1), keyOf(i + 2)];
+    for (let j = 0; j < 3; j++) {
+      const k0 = keys[j]!, k1 = keys[(j + 1) % 3]!;
+      const key = k0 < k1 ? `${k0}|${k1}` : `${k1}|${k0}`;
+      const found = edges.get(key);
+      if (found) found.n1 = n;
+      else edges.set(key, { a: i + j, b: i + ((j + 1) % 3), n0: n, n1: null });
+    }
+  }
+  const kept: Edge[] = [];
+  for (const e of edges.values()) {
+    if (e.n1 === null || e.n0.dot(e.n1) <= thresholdDot) kept.push(e);
+  }
+  const positions = new Float32Array(kept.length * 6);
+  const normals = new Float32Array(kept.length * 6);
+  kept.forEach((e, i) => {
+    const o = i * 6;
+    positions[o] = pos.getX(e.a); positions[o + 1] = pos.getY(e.a); positions[o + 2] = pos.getZ(e.a);
+    positions[o + 3] = pos.getX(e.b); positions[o + 4] = pos.getY(e.b); positions[o + 5] = pos.getZ(e.b);
+    const n1 = e.n1 ?? e.n0;
+    normals[o] = e.n0.x; normals[o + 1] = e.n0.y; normals[o + 2] = e.n0.z;
+    normals[o + 3] = n1.x; normals[o + 4] = n1.y; normals[o + 5] = n1.z;
+  });
+  if (flat !== geometry) flat.dispose();
+  return { positions, normals, count: kept.length };
+}
+
+/**
+ * Whole-edge hidden-line removal: keep an edge if either face it joins faces `eye`
+ * (given in the edges' own frame). Every kept edge is copied complete into `out`; the
+ * count kept is returned. On a convex solid this is exactly what a depth test would
+ * show. On a concave one it differs in the one way that matters for a vector display:
+ * an edge behind a lip is drawn through the lip rather than cut off in mid-air.
+ */
+export function frontFacingEdges(edges: CreaseEdges, eye: THREE.Vector3, out: Float32Array): number {
+  const P = edges.positions, N = edges.normals;
+  let n = 0;
+  for (let e = 0; e < edges.count; e++) {
+    const o = e * 6;
+    const dx = eye.x - P[o]!, dy = eye.y - P[o + 1]!, dz = eye.z - P[o + 2]!;
+    if (dx * N[o]! + dy * N[o + 1]! + dz * N[o + 2]! <= 0 && dx * N[o + 3]! + dy * N[o + 4]! + dz * N[o + 5]! <= 0) continue;
+    const w = n * 6;
+    out[w] = P[o]!; out[w + 1] = P[o + 1]!; out[w + 2] = P[o + 2]!;
+    out[w + 3] = P[o + 3]!; out[w + 4] = P[o + 4]!; out[w + 5] = P[o + 5]!;
+    n++;
+  }
+  return n;
+}
+
+/** A stroke set that hides its own back edges whole, by facing, instead of by depth. */
+export interface CulledStrokes extends VectorStrokes {
+  /** Recompute which edges to draw for a camera at `eye` (world frame). Returns the count drawn. */
+  cull(eye: THREE.Vector3): number;
+}
+
+/**
+ * Strokes for a solid whose own hidden lines are removed edge by edge (`frontFacingEdges`)
+ * rather than pixel by pixel, so no line of it ever just ends. Pair it with `setOccluder`
+ * and `setOrder` so its solid still hides everything BEHIND it while leaving its own
+ * strokes alone. The set's group must carry only a position and a rotation.
+ */
+export function createCulledStrokes(edges: CreaseEdges, color: THREE.ColorRepresentation): CulledStrokes {
+  const fat = new LineSegmentsGeometry();
+  fat.setPositions(edges.positions.slice()); // bounds cover every edge; the visible subset is compacted in each frame
+  const buffer = (fat.getAttribute('instanceStart') as THREE.InterleavedBufferAttribute).data;
+  const array = buffer.array as Float32Array;
+  const set = buildTiers(fat, color);
+  const eye = new THREE.Vector3();
+  const inverse = new THREE.Quaternion();
+  return Object.assign(set, {
+    cull(eyeWorld: THREE.Vector3): number {
+      eye.copy(eyeWorld).sub(set.group.position).applyQuaternion(inverse.copy(set.group.quaternion).invert());
+      const n = frontFacingEdges(edges, eye, array);
+      buffer.needsUpdate = true;
+      fat.instanceCount = n;
+      return n;
+    },
+  });
 }
 
 /**
@@ -376,43 +512,58 @@ export function portStrokes(radius: number, tube: number, collar: number): Float
 }
 
 /**
- * A rock as a vector display would draw it: the edges of an irregular CONVEX polyhedron.
- * Convex matters (#48): a dented shape is concave, and hidden-line removal on a concave
- * solid correctly shows edges that vanish mid-face behind the dent's lip — right for a
- * cave, wrong for a rock. So a rock is the convex hull of a couple of dozen seeded
- * points scattered inside a squashed sphere. Every vertex stays inside `radius`, which
- * is what the sim judges collisions against; the same seed is always the same rock.
+ * A rock as a vector display would draw it: the crease edges of a squashed icosphere
+ * with a few broad dents pressed into it. Dents make it concave, which is fine now
+ * that a rock's own hidden lines are removed whole (`createCulledStrokes`, #49) — the
+ * convex-hull detour of #48 only ever existed to keep a depth test from cutting edges
+ * off behind a lip. Every vertex stays inside `radius`, which is what the sim judges
+ * collisions against; the same seed is always the same rock.
  */
-export const ROCK_MIN_SCALE = 0.7;
-export const ROCK_POINTS: readonly [number, number] = [16, 26];
+export const ROCK_MIN_SCALE = 0.62;
+/** Crease angle for rock edges: low, so the lattice of the icosphere reads as a surface. */
+export const ROCK_CREASE_DEG = 6;
 
-export function asteroidStrokes(radius: number, seed: number, creaseDeg = 8): Float32Array {
-  const geometry = asteroidGeometry(radius, seed);
-  const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
-  const out = new Float32Array(edges.getAttribute('position').array as Float32Array);
-  edges.dispose();
+/** Rock edges with face adjacency, for `createCulledStrokes`. */
+export function asteroidEdges(radius: number, seed: number, detail = 1): CreaseEdges {
+  const geometry = asteroidGeometry(radius, seed, detail);
+  const edges = creaseEdges(geometry, ROCK_CREASE_DEG);
   geometry.dispose();
-  return out;
+  return edges;
+}
+
+/** Rock edges as flat segment pairs, every edge, no culling. */
+export function asteroidStrokes(radius: number, seed: number, detail = 1): Float32Array {
+  return asteroidEdges(radius, seed, detail).positions;
 }
 
 /** The rock's solid, before it is reduced to edges. Same seed, same rock. */
-export function asteroidGeometry(radius: number, seed: number): THREE.BufferGeometry {
+export function asteroidGeometry(radius: number, seed: number, detail = 1): THREE.BufferGeometry {
   const next = rng(seed);
+  // a handful of dents: a direction, a cap width and a depth each
+  const dents = Array.from({ length: 4 + Math.floor(next() * 3) }, () => ({
+    dir: new THREE.Vector3(next() * 2 - 1, next() * 2 - 1, next() * 2 - 1).normalize(),
+    width: 0.45 + next() * 0.4, // cos of the cap's half-angle: bigger = narrower
+    depth: 0.12 + next() * 0.2,
+  }));
   const squash = new THREE.Vector3(0.78 + next() * 0.22, 0.78 + next() * 0.22, 0.78 + next() * 0.22);
-  const count = ROCK_POINTS[0] + Math.floor(next() * (ROCK_POINTS[1] - ROCK_POINTS[0] + 1));
-  const points: THREE.Vector3[] = [];
-  for (let i = 0; i < count; i++) {
-    // a direction, uniform over the sphere, pushed to somewhere between the floor and the rim
-    const z = next() * 2 - 1;
-    const t = next() * Math.PI * 2;
-    const r = Math.sqrt(1 - z * z);
-    const scale = ROCK_MIN_SCALE + next() * (1 - ROCK_MIN_SCALE);
-    points.push(new THREE.Vector3(r * Math.cos(t) * squash.x, r * Math.sin(t) * squash.y, z * squash.z).multiplyScalar(radius * scale));
+
+  const geometry = new THREE.IcosahedronGeometry(1, detail);
+  const pos = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const d = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    d.fromBufferAttribute(pos, i).normalize();
+    let scale = 1;
+    for (const dent of dents) {
+      const c = d.dot(dent.dir);
+      if (c > dent.width) {
+        const t = (c - dent.width) / (1 - dent.width); // 0 at the cap's edge, 1 at its centre
+        scale -= dent.depth * t * t * (3 - 2 * t);
+      }
+    }
+    scale = Math.max(ROCK_MIN_SCALE, scale);
+    pos.setXYZ(i, d.x * scale * squash.x * radius, d.y * scale * squash.y * radius, d.z * scale * squash.z * radius);
   }
-  // guarantee the rock uses its radius: one point at full extent so the silhouette is not timid
-  const z = next() * 2 - 1, t = next() * Math.PI * 2, r = Math.sqrt(1 - z * z);
-  points.push(new THREE.Vector3(r * Math.cos(t) * squash.x, r * Math.sin(t) * squash.y, z * squash.z).normalize().multiplyScalar(radius));
-  const geometry = new ConvexGeometry(points);
+  pos.needsUpdate = true;
   geometry.computeVertexNormals();
   return geometry;
 }
