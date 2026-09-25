@@ -96,7 +96,20 @@ export function placeStructure(
   const orientation = roll.multiply(facing);
   const anchorRing = new Vector3(...anchor.position).addScaledVector(new Vector3(...anchor.normal).normalize(), anchor.collar);
   const position = ringPosition.clone().sub(anchorRing.applyQuaternion(orientation));
+  return addStructure(world, spec, position, orientation, portId);
+}
 
+/**
+ * Add a structure at a pose given directly. Every port becomes a target. Returns the
+ * structure index and, if `portId` names one of its ports, that port's target index.
+ */
+export function addStructure(
+  world: World,
+  spec: StructureSpec,
+  position: Vector3,
+  orientation: Quaternion,
+  portId?: string,
+): { structure: number; port: number } {
   const structureIndex = world.structures.length;
   const structure: Structure = {
     name: spec.name,
@@ -128,6 +141,14 @@ export function placeStructure(
     if (p.id === portId) anchorTarget = idx;
   }
   return { structure: structureIndex, port: anchorTarget };
+}
+
+/** A rock: a sphere the ship must not touch. Drawn tumbled by `orientation`; judged as a sphere. */
+export interface Obstacle {
+  name: string;
+  position: Vector3;
+  radius: number;
+  orientation: Quaternion;
 }
 
 /** How the run ended in contact: through the ring, or into something solid. */
@@ -189,6 +210,8 @@ export interface World {
   assigned: number;
   /** the solid things ports are mounted on */
   structures: Structure[];
+  /** rocks; touching one is a crash (#43) */
+  obstacles: Obstacle[];
   /** simulated seconds since start */
   time: number;
   /** the first docking-port contact this run, or null while still flying (#25) */
@@ -217,7 +240,7 @@ export function resetRun(world: World): void {
 }
 
 export function createWorld(ships: Ship[] = []): World {
-  return { ships, targets: [], selected: -1, assigned: -1, structures: [], time: 0, contact: null, outcome: null, summary: null };
+  return { ships, targets: [], selected: -1, assigned: -1, structures: [], obstacles: [], time: 0, contact: null, outcome: null, summary: null };
 }
 
 const RAD_TO_DEG = 180 / Math.PI;
@@ -338,6 +361,7 @@ const frameCom = { axial: 0, radial: 0 };
 const framePort = { axial: 0, radial: 0 };
 
 const scratchLocal = new Vector3();
+const scratchZero = new Vector3();
 const scratchInv = new Quaternion();
 
 /**
@@ -354,6 +378,12 @@ export function structureStrike(structure: Structure, com: Vector3, shipRadius: 
     if (radial <= section.radius + shipRadius) return section.label ?? 'hull';
   }
   return null;
+}
+
+/** A rock is a sphere: overlapping it with the ship's hull sphere is a strike. */
+export function obstacleStrike(obstacle: Obstacle, com: Vector3, shipRadius: number): boolean {
+  const reach = obstacle.radius + shipRadius;
+  return com.distanceToSquared(obstacle.position) <= reach * reach;
 }
 
 /** The hoop of a port is solid: the ship's hull sphere touching its tube is a strike. */
@@ -390,11 +420,17 @@ function recordContact(world: World, ship: Ship, targetIndex: number, relativeTo
 
 function detectContact(world: World): void {
   if (world.contact !== null) return;
-  const { ships, targets, structures } = world;
+  const { ships, targets, structures, obstacles } = world;
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i]!;
     const shipRadius = ship.spec.hullRadius ?? DEFAULT_HULL_RADIUS;
     dockingPortPosition(ship, scratchPort);
+    for (let k = 0; k < obstacles.length; k++) {
+      if (obstacleStrike(obstacles[k]!, ship.body.position, shipRadius)) {
+        recordContact(world, ship, world.assigned, scratchZero, 'hull', obstacles[k]!.name);
+        return;
+      }
+    }
     // Strikes are judged before any ring, so clipping a hoop or the hull on the way in
     // is a crash, not a dock.
     for (let k = 0; k < structures.length; k++) {

@@ -2,7 +2,7 @@
  * Thin math layer. Everything else imports vectors and quaternions from here,
  * so the underlying library is swappable and never leaks into the simulation.
  */
-export { Vector3, Quaternion, Matrix3 } from 'three';
+export { Vector3, Quaternion, Matrix3, Matrix4 } from 'three';
 
 /** Standard gravity, used only to convert specific impulse and to express felt acceleration in g. */
 export const G0 = 9.80665;

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import type { World, Target, Structure } from '../sim/world';
+import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, sphereStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -50,6 +50,9 @@ const PORT_COLOR = 0x7f9fae;
 /** Structure hulls: dimmer and cooler still, and held at a fraction of full stroke opacity. */
 const HULL_COLOR = 0x4f7584;
 const HULL_FADE = 0.55;
+/** Rocks: neutral and held back, so they read as matter rather than machinery, and never outshine the port. */
+const ROCK_COLOR = 0x8c877c;
+const ROCK_FADE = 0.7;
 
 export function createRenderer(): Renderer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
@@ -80,6 +83,7 @@ export function createRenderer(): Renderer {
   // replaced list rebuilds only what changed. The assigned port is drawn warm.
   const targetMeshes = new Map<Target, { strokes: VectorStrokes; assigned: boolean }>();
   const structureMeshes = new Map<Structure, VectorStrokes>();
+  const obstacleMeshes = new Map<Obstacle, VectorStrokes>();
 
   function syncTargets(world: World): void {
     const { targets, structures, assigned } = world;
@@ -110,6 +114,21 @@ export function createRenderer(): Renderer {
       strokes.setFade(HULL_FADE);
       scene.add(strokes.group);
       structureMeshes.set(structure, strokes);
+    }
+    const { obstacles } = world;
+    for (const [obstacle, mesh] of obstacleMeshes) {
+      if (obstacles.includes(obstacle)) continue;
+      scene.remove(mesh.group);
+      mesh.dispose();
+      obstacleMeshes.delete(obstacle);
+    }
+    for (const obstacle of obstacles) {
+      if (obstacleMeshes.has(obstacle)) continue;
+      const strokes = createVectorStrokes(sphereStrokes(obstacle.radius), ROCK_COLOR);
+      strokes.group.position.copy(obstacle.position as unknown as THREE.Vector3);
+      strokes.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
+      scene.add(strokes.group);
+      obstacleMeshes.set(obstacle, strokes);
     }
   }
 
@@ -210,6 +229,10 @@ export function createRenderer(): Renderer {
       const mesh = structureMeshes.get(structure)!;
       mesh.group.position.copy(structure.position as unknown as THREE.Vector3);
       mesh.group.quaternion.copy(structure.orientation as unknown as THREE.Quaternion);
+    }
+    for (const obstacle of world.obstacles) {
+      const mesh = obstacleMeshes.get(obstacle)!;
+      mesh.setFade(ROCK_FADE * farFade(projectedRadiusPx(obstacle.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight)));
     }
 
     post.render(scene, camera, world);
