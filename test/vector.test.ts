@@ -61,14 +61,20 @@ describe('hidden lines: every solid carries a depth-only occluder', () => {
     hull.computeBoundingBox();
     expect(hull.boundingBox!.max.x).toBeCloseTo(5 * OCCLUDER_SHRINK, 5); // section 1 skipped
 
-    // the port's hole must stay a hole: no geometry inside the ring's inner radius at the plane
+    // the port is closed by a hatch (#50): a disc just behind the ring plane covers the inside
     const port = portOccluder(3, 0.18, 1.5);
     const p = port.getAttribute('position');
-    let minInPlane = Infinity;
+    let hatchZ = NaN, hatchR = 0, onAxis = false;
     for (let i = 0; i < p.count; i++) {
-      if (Math.abs(p.getZ(i)) < 0.2) minInPlane = Math.min(minInPlane, Math.hypot(p.getX(i), p.getY(i)));
+      const r = Math.hypot(p.getX(i), p.getY(i)), z = p.getZ(i);
+      if (r < 1e-6) { onAxis = true; hatchZ = z; }
+      if (Math.abs(z - hatchZ) < 1e-6) hatchR = Math.max(hatchR, r);
     }
-    expect(minInPlane).toBeGreaterThan(3 - 0.18 - 1e-6);
+    expect(onAxis).toBe(true);
+    expect(hatchZ).toBeLessThan(0); // behind the ring plane, so the ring's inner stroke stays in front
+    expect(hatchZ).toBeGreaterThan(-0.18); // but inside the ring's tube, not down the collar
+    expect(hatchR).toBeGreaterThan(3 - 0.18 * 0.85); // reaches into the torus solid: no gap
+    expect(hatchR).toBeLessThan(3); // and stops short of the ring's centreline
 
     // the rock's solid is the same rock its edges came from: same farthest point
     const solid = asteroidGeometry(10, 77);
