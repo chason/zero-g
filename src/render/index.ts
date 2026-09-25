@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorRing, projectedRadiusPx, setVectorResolution, type VectorRing } from './vector';
+import { createVectorLines, createVectorStrokes, torusStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -25,6 +25,23 @@ export interface Renderer {
 const DUST_COUNT = 1200;
 const DUST_BOX = 240;
 
+let sprite: THREE.Texture | null = null;
+/** A soft radial dot, so points glow on their own without a screen-space bloom. */
+function softSprite(): THREE.Texture {
+  if (sprite) return sprite;
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  sprite = new THREE.CanvasTexture(c);
+  return sprite;
+}
+
 /** Ring tube radius, metres. Thin enough to read as a hoop, thick enough to survive 400 m. */
 const RING_TUBE = 0.18;
 const RING_COLOR = 0xffb347;
@@ -44,7 +61,7 @@ export function createRenderer(): Renderer {
   const hullGeometry = new THREE.ConeGeometry(1.2, 5, 12);
   hullGeometry.rotateX(-Math.PI / 2);
   const ship = new THREE.Group();
-  ship.add(createVectorLines(hullGeometry, 0x9fd9cc));
+  ship.add(createVectorLines(hullGeometry, 0x9fd9cc).group);
   scene.add(ship);
   const plumes = createPlumes(scene, ship);
   const post = createPostProcess(renderer);
@@ -54,7 +71,7 @@ export function createRenderer(): Renderer {
   // only when a target appears and disposed only when it leaves; the per-frame path just
   // copies transforms. An unlit material is the right choice for an emissive hoop in
   // space: there are no lights in this scene to react to.
-  const targetMeshes = new Map<Target, VectorRing>();
+  const targetMeshes = new Map<Target, VectorStrokes>();
   const origin = new THREE.Vector3();
 
   function syncTargets(targets: Target[]): void {
@@ -73,9 +90,10 @@ export function createRenderer(): Renderer {
       const target = targets[i]!;
       if (targetMeshes.has(target)) continue;
       // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
-      // Hoops and longitudes, as a vector display would draw a torus — at three levels
-      // of detail, so a distant ring is a single dim circle rather than a blob.
-      const mesh = createVectorRing(target.radius, RING_TUBE, RING_COLOR);
+      // Hoops and longitudes, as a vector display would draw a torus. No level of
+      // detail: the glow is bounded per stroke, so a distant ring merges into a solid
+      // mark of its own colour instead of blooming, and nothing pops as you approach.
+      const mesh = createVectorStrokes(torusStrokes(target.radius, RING_TUBE), RING_COLOR);
       scene.add(mesh.group);
       targetMeshes.set(target, mesh);
     }
@@ -86,7 +104,9 @@ export function createRenderer(): Renderer {
   for (let i = 0; i < dustPos.length; i++) dustPos[i] = (Math.random() - 0.5) * DUST_BOX;
   const dustGeo = new THREE.BufferGeometry();
   dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
-  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ size: 0.12, color: 0x5f7080 }));
+  const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+    size: 0.32, color: 0x8fa3b0, map: softSprite(), transparent: true, depthWrite: false, alphaTest: 0.02,
+  }));
   scene.add(dust);
 
   // Stars at effectively infinite distance: rotation cues only, correctly unaffected by translation.
@@ -97,7 +117,9 @@ export function createRenderer(): Renderer {
   }
   const starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({ size: 9000, color: 0xdfe8ff })));
+  scene.add(new THREE.Points(starGeo, new THREE.PointsMaterial({
+    size: 14000, color: 0xdfe8ff, map: softSprite(), transparent: true, depthWrite: false, alphaTest: 0.02,
+  })));
 
   // Cockpit is the default: the game is hand-flying a rigid body from inside it.
   let view: ViewMode = 'cockpit';
@@ -170,7 +192,7 @@ export function createRenderer(): Renderer {
       const mesh = targetMeshes.get(target)!;
       mesh.group.position.copy(target.position as unknown as THREE.Vector3);
       if (mesh.group.position.lengthSq() > 0) mesh.group.lookAt(origin);
-      mesh.update(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight));
+      mesh.setFade(farFade(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight)));
     }
 
     post.render(scene, camera, world);
