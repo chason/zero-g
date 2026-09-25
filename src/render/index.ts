@@ -141,7 +141,7 @@ export function createRenderer(): Renderer {
       const turning: StructureMesh['turning'] = [];
       for (const index of turningIdx) {
         const sec = structure.hull[index]!;
-        const strokes = createVectorStrokes(sectionStrokes(sec), HULL_COLOR);
+        const strokes = createVectorStrokes(sectionStrokes(structure.hull, index), HULL_COLOR);
         strokes.setFade(HULL_FADE);
         strokes.setOccluder(cylinderOccluder(sec.radius, sec.from, sec.to));
         group.add(strokes.group);

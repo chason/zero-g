@@ -506,13 +506,50 @@ function mergeGeometries(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** One hull section on its own, for a section that turns independently of the rest. */
+/**
+ * The section a step face belongs to (#58): of the two sections a change of radius joins,
+ * the larger. The face is that section's end cap, and the smaller section pokes out of it —
+ * so when the larger one turns, its face turns with it, sliding round the fixed hub, and
+ * when the smaller one turns, it spins inside a face that stays put.
+ */
+export function faceOwner(
+  sections: ReadonlyArray<{ radius: number }>,
+  i: number,
+): number {
+  return sections[i]!.radius >= sections[i + 1]!.radius ? i : i + 1;
+}
+
+/** Radial spokes across the step between two adjacent sections. */
+function faceSpokes(
+  a: { radius: number; to: number },
+  b: { radius: number; from: number },
+  spokes: number,
+  out: number[],
+): void {
+  for (let k = 0; k < spokes; k++) {
+    const t = (k / spokes) * Math.PI * 2;
+    out.push(a.radius * Math.cos(t), a.radius * Math.sin(t), a.to, b.radius * Math.cos(t), b.radius * Math.sin(t), b.from);
+  }
+}
+
+/**
+ * One section drawn on its own — a turning one — with the step faces it owns, so its end
+ * caps turn with it (#58). Same segments the section contributes to `hullStrokes`.
+ */
 export function sectionStrokes(
-  section: { radius: number; from: number; to: number },
+  sections: ReadonlyArray<{ radius: number; from: number; to: number }>,
+  index: number,
+  spokes = 12,
   longitudes = 12,
   hoopSpacing = 10,
 ): Float32Array {
+  const sec = sections[index]!;
   const out: number[] = [];
-  cylinderStrokes(section.radius, section.from, section.to, out, longitudes, hoopSpacing, 36);
+  cylinderStrokes(sec.radius, sec.from, sec.to, out, longitudes, hoopSpacing, 36);
+  const prev = sections[index - 1];
+  if (prev && Math.abs(prev.radius - sec.radius) >= 1e-6 && faceOwner(sections, index - 1) === index) faceSpokes(prev, sec, spokes, out);
+  const next = sections[index + 1];
+  if (next && Math.abs(next.radius - sec.radius) >= 1e-6 && faceOwner(sections, index) === index) faceSpokes(sec, next, spokes, out);
   return new Float32Array(out);
 }
 
@@ -537,10 +574,9 @@ export function hullStrokes(
     const a = sections[i]!;
     const b = sections[i + 1]!;
     if (Math.abs(a.radius - b.radius) < 1e-6) continue;
-    for (let k = 0; k < spokes; k++) {
-      const t = (k / spokes) * Math.PI * 2;
-      out.push(a.radius * Math.cos(t), a.radius * Math.sin(t), a.to, b.radius * Math.cos(t), b.radius * Math.sin(t), b.from);
-    }
+    // A face belongs to the larger section; a skipped (turning) section takes its faces with it.
+    if (skip.has(faceOwner(sections, i))) continue;
+    faceSpokes(a, b, spokes, out);
   }
   return new Float32Array(out);
 }
