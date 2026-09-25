@@ -7,8 +7,7 @@ import {
   STEP,
   PLAY_SPACE_RADIUS,
   assertWithinPlaySpace,
-  type Target, createTarget, type TenderSpec } from '../src/sim/world';
-import tender from '../src/data/tender.json';
+  type Target, createPort } from '../src/sim/world';
 import { prepare } from '../src/sim/ship';
 import type { ShipSpec, Ship } from '../src/sim/ship';
 import { createBody } from '../src/sim/body';
@@ -33,7 +32,7 @@ function ship(position = new Vector3()): Ship {
 }
 
 function ring(position: Vector3): Target {
-  return createTarget(tender as TenderSpec, position, new Vector3(0, 0, 1));
+  return createPort('ring', position, new Vector3(0, 0, 1));
 }
 
 /** Silence console.warn and count calls; every test gets a fresh spy. */

@@ -99,6 +99,7 @@ export function createTarget(): Instrument {
     },
 
     draw(ctx: HudContext) {
+      const { world } = ctx;
       if (!bracket || !bracketName || !arrow || !arrowHead || !arrowName) return;
       const target = ctx.world.targets[ctx.world.selected];
       if (!target) {
@@ -107,10 +108,11 @@ export function createTarget(): Instrument {
         return;
       }
 
-      if (target.name !== lastName) {
-        lastName = target.name;
-        bracketName.textContent = target.name;
-        arrowName.textContent = target.name;
+      const label = world.selected === world.assigned ? `${target.name}  ASSIGNED` : target.name;
+      if (label !== lastName) {
+        lastName = label;
+        bracketName.textContent = label;
+        arrowName.textContent = label;
       }
 
       projectPoint(target.position, ctx, proj);

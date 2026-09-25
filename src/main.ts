@@ -1,7 +1,7 @@
 import { createRenderer } from './render';
 import { createHud } from './hud';
-import { createWorld, createTarget, resetRun, step, STEP, type World, type TenderSpec } from './sim/world';
-import tenderSpec from './data/tender.json';
+import { createWorld, placeStructure, resetRun, step, STEP, type World, type StructureSpec } from './sim/world';
+import capitalSpec from './data/capital.json';
 import { emptyCommand, resolve, type Command } from './control';
 import { createKeyboardMouse } from './input';
 import { createShip, type ShipSpec } from './sim/ship';
@@ -17,11 +17,13 @@ const skiff = createShip(skiffSpec as ShipSpec);
 const world: World = createWorld([skiff]);
 // The docking ring (#25): 400 m dead ahead of the starting pose, stationary, 3 m contact
 // radius around its centre. The sim tests the ship's docking port against that radius
-// and records the first contact; the renderer draws a torus of the same radius so what
-// the pilot flies at is exactly what the sim judges. Its axis faces the origin, so the
-// approach is straight down -Z from where the Skiff starts.
-world.targets.push(createTarget(tenderSpec as TenderSpec, new Vector3(0, 0, -400), new Vector3(0, 0, 1)));
-world.selected = 0;
+// The Yarrow, a capital mining ship with twenty docking ports, placed so that the port
+// we are assigned — F6, on the forebody — is 400 m dead ahead with its ring facing us.
+// Every other port is drawn dim and will end the run as WRONG PORT if entered (#42).
+// Rolled 90° so her length lies across our view rather than standing on end.
+const { port: assignedPort } = placeStructure(world, capitalSpec as StructureSpec, 'F6', new Vector3(0, 0, -400), new Vector3(0, 0, 1), 90);
+world.assigned = assignedPort;
+world.selected = assignedPort;
 // One throttle slot per thruster on the ship we actually loaded. Reused every frame:
 // resolve() writes into it in place, so the flight loop allocates nothing.
 const command: Command = emptyCommand(skiff.prepared.length);

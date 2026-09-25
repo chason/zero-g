@@ -209,27 +209,26 @@ export function torusStrokes(
 }
 
 /**
- * A cylinder along -Z from z=-from to z=-to, as a vector display would draw it: hoops
- * at each end and every `hoopSpacing` metres between, and `longitudes` lines along
- * its length. Returns flat xyz pairs, appended to `out`.
+ * A cylinder along Z between z0 and z1, as a vector display would draw it: hoops at
+ * each end and every `hoopSpacing` metres between, and `longitudes` lines along its
+ * length. Appends flat xyz pairs to `out`.
  */
 export function cylinderStrokes(
   radius: number,
-  from: number,
-  to: number,
+  z0: number,
+  z1: number,
   out: number[],
   longitudes = 8,
   hoopSpacing = 4,
   hoopSegments = 24,
 ): void {
-  const zs: number[] = [];
-  const length = to - from;
+  const length = Math.abs(z1 - z0);
   const n = Math.max(1, Math.round(length / hoopSpacing));
-  for (let i = 0; i <= n; i++) zs.push(-(from + (length * i) / n));
-  for (const z of zs) {
-    for (let i = 0; i < hoopSegments; i++) {
-      const a = (i / hoopSegments) * Math.PI * 2;
-      const b = ((i + 1) / hoopSegments) * Math.PI * 2;
+  for (let i = 0; i <= n; i++) {
+    const z = z0 + ((z1 - z0) * i) / n;
+    for (let k = 0; k < hoopSegments; k++) {
+      const a = (k / hoopSegments) * Math.PI * 2;
+      const b = ((k + 1) / hoopSegments) * Math.PI * 2;
       out.push(radius * Math.cos(a), radius * Math.sin(a), z, radius * Math.cos(b), radius * Math.sin(b), z);
     }
   }
@@ -237,31 +236,44 @@ export function cylinderStrokes(
     const a = (l / longitudes) * Math.PI * 2;
     const x = radius * Math.cos(a);
     const y = radius * Math.sin(a);
-    out.push(x, y, -from, x, y, -to);
+    out.push(x, y, z0, x, y, z1);
   }
 }
 
 /**
- * The hull of a tender behind its ring: each section a cylinder, and where the radius
- * steps between sections, spokes joining the two rims so the silhouette closes.
+ * A structure's hull: each section a cylinder along local +Z, and where the radius
+ * steps between sections, spokes joining the two rims so the silhouette closes. Big
+ * hulls get sparser hoops so the stroke count stays sane.
  */
-export function tenderHullStrokes(
+export function hullStrokes(
   sections: ReadonlyArray<{ radius: number; from: number; to: number }>,
-  spokes = 8,
+  spokes = 12,
+  longitudes = 12,
+  hoopSpacing = 10,
 ): Float32Array {
   const out: number[] = [];
-  for (const sec of sections) cylinderStrokes(sec.radius, sec.from, sec.to, out);
+  for (const sec of sections) cylinderStrokes(sec.radius, sec.from, sec.to, out, longitudes, hoopSpacing, 36);
   for (let i = 0; i + 1 < sections.length; i++) {
     const a = sections[i]!;
     const b = sections[i + 1]!;
     if (Math.abs(a.radius - b.radius) < 1e-6) continue;
-    const z = -Math.min(a.to, b.from);
     for (let k = 0; k < spokes; k++) {
       const t = (k / spokes) * Math.PI * 2;
-      out.push(a.radius * Math.cos(t), a.radius * Math.sin(t), -a.to, b.radius * Math.cos(t), b.radius * Math.sin(t), -b.from);
-      void z;
+      out.push(a.radius * Math.cos(t), a.radius * Math.sin(t), a.to, b.radius * Math.cos(t), b.radius * Math.sin(t), b.from);
     }
   }
+  return new Float32Array(out);
+}
+
+/**
+ * A docking port in its own frame: +Z is the open side, the ring lies in the XY plane
+ * at z=0, and the collar runs from the hull surface at z=-collar up to the ring.
+ */
+export function portStrokes(radius: number, tube: number, collar: number): Float32Array {
+  const ring = torusStrokes(radius, tube);
+  if (collar <= 0) return ring;
+  const out: number[] = Array.from(ring);
+  cylinderStrokes(radius, -collar, 0, out, 8, collar, 24);
   return new Float32Array(out);
 }
 

@@ -7,12 +7,11 @@ import {
   DOCK_MAX_SPEED,
   DOCK_MAX_ROTATION_DEG_PER_SEC,
   RING_PLANE_TOLERANCE,
-  createTarget,
-  type Target,
+  placeStructure,
   type World,
-  type TenderSpec,
+  type StructureSpec,
 } from '../src/sim/world';
-import tender from '../src/data/tender.json';
+import capital from '../src/data/capital.json';
 import { createShip, createPilot, dockingPortPosition } from '../src/sim/ship';
 import type { ShipSpec, Ship } from '../src/sim/ship';
 import { OMEGA_EPSILON } from '../src/sim/body';
@@ -24,13 +23,16 @@ import skiff from '../src/data/skiff.json';
 
 const spec = skiff as ShipSpec;
 
-/** The M6 tender: ring 400 m down -Z from the starting pose, facing +Z, static. */
+/** The assigned port of the capital: ring 400 m down -Z from the starting pose, facing +Z. */
 const RING_POSITION = new Vector3(0, 0, -400);
 /** Contact is judged where the port enters the tolerance band at the ring plane. */
 const CONTACT_Z = RING_PLANE_TOLERANCE;
 
-function ring(): Target {
-  return createTarget(tender as TenderSpec, RING_POSITION, new Vector3(0, 0, 1));
+/** Place the capital so its port F6 is the ring above, and assign it. */
+function placeCapital(world: World): void {
+  const { port } = placeStructure(world, capital as StructureSpec, 'F6', RING_POSITION, new Vector3(0, 0, 1));
+  world.assigned = port;
+  world.selected = port;
 }
 
 /**
@@ -47,8 +49,7 @@ function approach(gap: number, speed: number, spin = new Vector3()): { world: Wo
   ship.body.velocity.set(0, 0, -speed);
   ship.body.angularVelocity.copy(spin);
   const world = createWorld([ship]);
-  world.targets.push(ring());
-  world.selected = 0;
+  placeCapital(world);
   return { world, ship };
 }
 
@@ -160,7 +161,7 @@ describe('contact detection (#25)', () => {
     run(world, 1);
     const c = world.contact!;
     expect(c).not.toBeNull();
-    expect(c.targetIndex).toBe(0);
+    expect(c.targetIndex).toBe(world.assigned);
     expect(c.time).toBeCloseTo(150 * STEP, 9);
     expect(c.time).toBe(world.time);
     expect(c.relativeSpeed).toBeCloseTo(0.4, 9);
@@ -185,7 +186,7 @@ describe('contact detection (#25)', () => {
   it('measures speed relative to the target, not to the world', () => {
     const { world } = approach(0.1, 1);
     // a target receding at 0.7 m/s makes a 1 m/s ship a 0.3 m/s closure
-    world.targets[0]!.velocity.set(0, 0, -0.7);
+    world.targets[world.assigned]!.velocity.set(0, 0, -0.7);
     run(world, 60);
     expect(world.contact).not.toBeNull();
     expect(world.contact!.relativeSpeed).toBeCloseTo(0.3, 9);

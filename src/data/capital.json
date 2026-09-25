@@ -1,0 +1,32 @@
+{
+  "name": "Yarrow",
+  "hull": [
+    { "radius": 16, "from":   0, "to":  50, "label": "bow"       },
+    { "radius": 28, "from":  50, "to": 130, "label": "forebody"  },
+    { "radius": 38, "from": 130, "to": 210, "label": "refinery"  },
+    { "radius": 26, "from": 210, "to": 280, "label": "aft"       },
+    { "radius": 18, "from": 280, "to": 320, "label": "drive"     }
+  ],
+  "ports": [
+    { "id": "F1", "position": [28, 0, 70],     "normal": [1, 0, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F2", "position": [0, 28, 70],     "normal": [0, 1, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F3", "position": [-28, 0, 70],    "normal": [-1, 0, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F4", "position": [0, -28, 70],    "normal": [0, -1, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F5", "position": [28, 0, 90],     "normal": [1, 0, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F6", "position": [0, 28, 90],     "normal": [0, 1, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F7", "position": [-28, 0, 90],    "normal": [-1, 0, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F8", "position": [0, -28, 90],    "normal": [0, -1, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F9", "position": [28, 0, 110],    "normal": [1, 0, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F10", "position": [0, 28, 110],    "normal": [0, 1, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F11", "position": [-28, 0, 110],   "normal": [-1, 0, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "F12", "position": [0, -28, 110],   "normal": [0, -1, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A1", "position": [26, 0, 235],    "normal": [1, 0, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A2", "position": [0, 26, 235],    "normal": [0, 1, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A3", "position": [-26, 0, 235],   "normal": [-1, 0, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A4", "position": [0, -26, 235],   "normal": [0, -1, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A5", "position": [26, 0, 255],    "normal": [1, 0, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A6", "position": [0, 26, 255],    "normal": [0, 1, 0],   "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A7", "position": [-26, 0, 255],   "normal": [-1, 0, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 },
+    { "id": "A8", "position": [0, -26, 255],   "normal": [0, -1, 0],  "radius": 3, "tube": 0.18, "collar": 1.5 }
+  ]
+}

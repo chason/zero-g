@@ -30,6 +30,7 @@ export const OUTCOME_LABELS: Record<RunOutcome, string> = {
   dock: 'DOCKED',
   crash: 'CRASHED',
   blackout: 'BLACKOUT',
+  'wrong-port': 'WRONG PORT',
 };
 
 /** The display strings, already rounded. Pure data so tests need no DOM. */
@@ -81,7 +82,10 @@ export function summaryFields(world: World, out: SummaryFields): SummaryFields |
   if (outcome === null || summary === null) return null;
   // A crash into something solid says what was hit; the speed limits below are then
   // beside the point, and the headline carries the reason instead.
-  out.headline = outcome === 'crash' && summary.struck ? `STRUCK ${summary.struck.toUpperCase()}` : OUTCOME_LABELS[outcome];
+  out.headline =
+    outcome === 'crash' && summary.struck ? `STRUCK ${summary.struck.toUpperCase()}`
+    : outcome === 'wrong-port' && summary.port ? `WRONG PORT: ${summary.port.toUpperCase()}`
+    : OUTCOME_LABELS[outcome];
   out.time = formatSeconds(summary.time);
   out.propellant = formatKg(summary.propellantUsed);
   out.peakG = formatG(summary.peakG);

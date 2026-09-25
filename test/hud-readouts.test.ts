@@ -45,7 +45,7 @@ function makeShip(position = new Vector3(), velocity = new Vector3(), s: ShipSpe
 }
 
 function makeTarget(position: Vector3, velocity = new Vector3(), name = 'Ring A'): Target {
-  return { name, position, velocity, axis: new Vector3(0, 0, 1), radius: 2, tube: 0.1, hull: [] };
+  return { name, position, velocity, axis: new Vector3(0, 0, 1), radius: 2, tube: 0.1, structure: -1, collar: 0 };
 }
 
 function worldWith(ship: Ship, targets: Target[], selected: number): World {
