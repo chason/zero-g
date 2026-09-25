@@ -22,6 +22,8 @@ export interface AxisState {
   toggleView: boolean;
   /** Tab: same edge semantics as toggleView; advances world.selected through world.targets */
   cycleTarget: boolean;
+  /** Enter: same edge semantics; restarts the run in place, at any time (#34) */
+  restart: boolean;
 }
 
 export interface InputDevice {
@@ -47,6 +49,7 @@ export function emptyAxes(): AxisState {
     cutAll: false,
     toggleView: false,
     cycleTarget: false,
+    restart: false,
   };
 }
 
@@ -157,6 +160,7 @@ export function createKeyboardMouse(
   const edge = {
     view: { down: false, pending: false },
     target: { down: false, pending: false },
+    restart: { down: false, pending: false },
   };
 
   function press(e: { down: boolean; pending: boolean }, repeat: boolean | undefined): void {
@@ -226,6 +230,10 @@ export function createKeyboardMouse(
       press(edge.target, event.repeat);
       return;
     }
+    if (code === 'Enter' || code === 'NumpadEnter') {
+      press(edge.restart, event.repeat);
+      return;
+    }
     if (code === 'Escape') {
       if (hasDom && document.pointerLockElement) document.exitPointerLock();
       return;
@@ -253,6 +261,10 @@ export function createKeyboardMouse(
     }
     if (code === 'Tab') {
       edge.target.down = false;
+      return;
+    }
+    if (code === 'Enter' || code === 'NumpadEnter') {
+      edge.restart.down = false;
       return;
     }
     const state = keys.get(code);
@@ -337,6 +349,8 @@ export function createKeyboardMouse(
       edge.view.pending = false;
       axes.cycleTarget = edge.target.pending;
       edge.target.pending = false;
+      axes.restart = edge.restart.pending;
+      edge.restart.pending = false;
       return axes;
     },
     dispose(): void {
@@ -352,6 +366,7 @@ export function createKeyboardMouse(
       keys.clear();
       edge.view.down = edge.view.pending = false;
       edge.target.down = edge.target.pending = false;
+      edge.restart.down = edge.restart.pending = false;
     },
   };
 

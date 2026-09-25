@@ -20,8 +20,8 @@ import {
  * and never touches again, so the panel is written to the DOM once per outcome and then
  * left alone. Nothing in this file writes to the sim.
  *
- * There is no restart here. Restarting the run is a later issue; until it lands, the
- * panel stays up and the player reloads the page.
+ * Restart is Enter, handled in src/input and applied in main.ts (#34); the panel only
+ * says so. When the sim resets, world.summary goes null and the panel hides itself.
  *
  * Issue #26.
  */
@@ -145,6 +145,8 @@ export function createSummary(): Instrument {
         speed: line('row'),
         rotation: line('row'),
       };
+      const hint = line('sum-hint');
+      hint.textContent = 'ENTER  restart';
       root.appendChild(el);
     },
 

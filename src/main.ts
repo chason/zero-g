@@ -1,6 +1,6 @@
 import { createRenderer } from './render';
 import { createHud } from './hud';
-import { createWorld, step, STEP, type World } from './sim/world';
+import { createWorld, resetRun, step, STEP, type World } from './sim/world';
 import { emptyCommand, resolve, type Command } from './control';
 import { createKeyboardMouse } from './input';
 import { createShip, type ShipSpec } from './sim/ship';
@@ -66,6 +66,8 @@ function frame() {
       if (axes.cycleTarget && world.targets.length > 0) {
         world.selected = (world.selected + 1) % world.targets.length;
       }
+      // Restart resets in place, so every reference below stays valid. Legal mid-run too.
+      if (axes.restart) resetRun(world);
       resolve(skiff, axes, command);
 
       while (accumulator >= STEP) {

@@ -1,4 +1,4 @@
-import { netWrench, massFlow, currentMass, dockingPortPosition, type Ship } from './ship';
+import { netWrench, massFlow, currentMass, dockingPortPosition, resetShip, type Ship } from './ship';
 import { integrate, feltAcceleration, type Wrench } from './body';
 import { stepPilot } from './pilot';
 import { Vector3, G0 } from '../core/math';
@@ -71,6 +71,20 @@ export interface World {
 
 /** Physics runs here and nowhere else, at a constant rate, independent of frame rate. */
 export const STEP = 1 / 120;
+
+/**
+ * Start the run over without rebuilding anything. Ships reset in place, the clock and
+ * every per-run record clear; targets and the selection are exactly as they were.
+ * Legal at any time, not only after an outcome — bailing out of a bad approach is a
+ * normal use. Issue #34.
+ */
+export function resetRun(world: World): void {
+  for (const ship of world.ships) resetShip(ship);
+  world.time = 0;
+  world.contact = null;
+  world.outcome = null;
+  world.summary = null;
+}
 
 export function createWorld(ships: Ship[] = []): World {
   return { ships, targets: [], selected: -1, time: 0, contact: null, outcome: null, summary: null };
