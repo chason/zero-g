@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { Vector3 } from '../src/core/math';
+import { Vector3, Quaternion } from '../src/core/math';
 import {
-  generateScenario, applyScenario, rng, noseToward,
+  generateScenario, applyScenario, rng, noseToward, turnedOff, HEADING_OFF_DEG, START_ROLL_DEG,
   START_RANGE, START_CONE_DEG, ASTEROID_COUNT, ASTEROID_RADIUS, START_CLEARANCE, PORT_CLEARANCE, ROCK_SPIN_DEG,
 } from '../src/sim/scenario';
 import { createWorld, resetRun, step, STEP, structureStrike, obstacleStrike, type StructureSpec } from '../src/sim/world';
@@ -54,7 +54,9 @@ describe('generateScenario', () => {
     expect(generateScenario(cspec, 12346).shipPosition.distanceTo(a.shipPosition)).toBeGreaterThan(1);
   });
 
-  it('starts 350-450 m from the assigned ring, inside the cone, nose on the ring', () => {
+  it('starts 350-450 m from the assigned ring, inside the cone, nose turned off the ring but the Yarrow in view (#60)', () => {
+    const offs: number[] = [];
+    const clocks: number[] = [];
     for (const seed of seeds) {
       const sc = generateScenario(cspec, seed);
       const world = createWorld([]);
@@ -69,10 +71,48 @@ describe('generateScenario', () => {
       // within the cone about the port's axis: the ring faces us
       const toShip = ship.body.position.clone().sub(port.position).normalize();
       expect(toShip.dot(port.axis)).toBeGreaterThanOrEqual(Math.cos((START_CONE_DEG * Math.PI) / 180) - 1e-9);
-      // nose on the ring
+      // the nose is off the ring by HEADING_OFF_DEG, so W alone is not a plan...
       const nose = NOSE.clone().applyQuaternion(ship.body.orientation);
-      expect(nose.dot(port.position.clone().sub(ship.body.position).normalize())).toBeCloseTo(1, 6);
+      const toRing = port.position.clone().sub(ship.body.position).normalize();
+      const off = (Math.acos(Math.min(1, nose.dot(toRing))) * 180) / Math.PI;
+      expect(off).toBeGreaterThanOrEqual(HEADING_OFF_DEG[0] - 1e-6);
+      expect(off).toBeLessThanOrEqual(HEADING_OFF_DEG[1] + 1e-6);
+      offs.push(off);
+      // ...but the Yarrow is still ahead: its centre within the windscreen's half-width
+      const toYarrow = world.structures[0]!.position.clone().sub(ship.body.position).normalize();
+      expect((Math.acos(Math.min(1, nose.dot(toYarrow))) * 180) / Math.PI).toBeLessThan(50);
+      // which way the nose is off, as a clock angle in the frame that faces the ring
+      const aim = noseToward(ship.body.position, port.position);
+      const rel = nose.clone().applyQuaternion(aim.clone().invert());
+      clocks.push(Math.atan2(rel.y, rel.x));
     }
+    // the offset and its direction vary from seed to seed: it is not one fixed skew
+    expect(Math.max(...offs) - Math.min(...offs)).toBeGreaterThan(3);
+    expect(Math.max(...clocks) - Math.min(...clocks)).toBeGreaterThan(1);
+  });
+
+  it('turnedOff: the nose moves by the drawn angle, the roll only spins about it, and it is seeded', () => {
+    const aim = noseToward(new Vector3(0, 0, 400), new Vector3(0, 0, 0));
+    const q = turnedOff(rng(7), aim);
+    const nose = NOSE.clone().applyQuaternion(q);
+    const aimed = NOSE.clone().applyQuaternion(aim);
+    const off = (Math.acos(nose.dot(aimed)) * 180) / Math.PI;
+    expect(off).toBeGreaterThanOrEqual(HEADING_OFF_DEG[0]);
+    expect(off).toBeLessThanOrEqual(HEADING_OFF_DEG[1]);
+    expect(turnedOff(rng(7), aim).equals(q)).toBe(true);
+    expect(turnedOff(rng(8), aim).equals(q)).toBe(false);
+    // the roll only spins about the nose: the same draws with the roll left out put the nose in the same place
+    const n = rng(7);
+    const offDrawn = ((HEADING_OFF_DEG[0] + n() * (HEADING_OFF_DEG[1] - HEADING_OFF_DEG[0])) * Math.PI) / 180;
+    const clock = n() * Math.PI * 2;
+    const rollDrawn = (n() * 2 - 1) * START_ROLL_DEG;
+    expect(Math.abs(rollDrawn)).toBeLessThanOrEqual(START_ROLL_DEG);
+    const turnOnly = aim.clone().multiply(new Quaternion().setFromAxisAngle(new Vector3(Math.cos(clock), Math.sin(clock), 0), offDrawn));
+    expect(NOSE.clone().applyQuaternion(turnOnly).distanceTo(nose)).toBeLessThan(1e-9);
+    // and the ship's up differs from the turn-only up by exactly the roll
+    const up = new Vector3(0, 1, 0);
+    const rolled = (Math.acos(Math.min(1, up.clone().applyQuaternion(turnOnly).dot(up.clone().applyQuaternion(q)))) * 180) / Math.PI;
+    expect(rolled).toBeCloseTo(Math.abs(rollDrawn), 6);
   });
 
   it('assigns the port on the side we are nearest: no other port faces us better', () => {

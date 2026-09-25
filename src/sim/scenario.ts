@@ -23,6 +23,14 @@ export const START_CLEARANCE = 40;
 export const PORT_CLEARANCE = 14;
 /** Rock tumble rate, degrees per second: slow enough to be scenery, fast enough to notice. */
 export const ROCK_SPIN_DEG: readonly [number, number] = [1.5, 5];
+/**
+ * How far off the ring the nose points at the start, degrees, in a random direction
+ * (#60). Enough that "press W" is not a plan — the pilot has to find the port and turn
+ * onto it — and little enough that the Yarrow still fills the windscreen.
+ */
+export const HEADING_OFF_DEG: readonly [number, number] = [15, 35];
+/** And rolled about the nose by up to this, so the hull's long axis is not simply level. */
+export const START_ROLL_DEG = 40;
 
 export interface Scenario {
   seed: number;
@@ -73,6 +81,21 @@ export function noseToward(from: Vector3, at: Vector3): Quaternion {
  * port's axis, within a 40° cone so the ring is in front of us. Rocks fill a field
  * about the approach, kept clear of the start, every ring, and the hull.
  */
+/**
+ * An orientation `aim` turned so the nose is HEADING_OFF_DEG off where it pointed, in a
+ * random direction, then rolled about the nose by up to START_ROLL_DEG. Body-frame
+ * rotations composed after `aim`: the nose is body -Z, so the turn is about an axis in
+ * the body x-y plane and the roll about body z.
+ */
+export function turnedOff(next: () => number, aim: Quaternion): Quaternion {
+  const off = ((HEADING_OFF_DEG[0] + next() * (HEADING_OFF_DEG[1] - HEADING_OFF_DEG[0])) * Math.PI) / 180;
+  const clock = next() * Math.PI * 2;
+  const roll = ((next() * 2 - 1) * START_ROLL_DEG * Math.PI) / 180;
+  const turn = new Quaternion().setFromAxisAngle(new Vector3(Math.cos(clock), Math.sin(clock), 0), off);
+  const spin = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), roll);
+  return aim.clone().multiply(turn).multiply(spin);
+}
+
 export function generateScenario(spec: StructureSpec, seed: number): Scenario {
   const next = rng(seed);
   const structurePosition = new Vector3(0, 0, 0);
@@ -93,7 +116,7 @@ export function generateScenario(spec: StructureSpec, seed: number): Scenario {
   const range = START_RANGE[0] + next() * (START_RANGE[1] - START_RANGE[0]);
   const dir = randomInCone(next, normal, START_CONE_DEG, new Vector3());
   const shipPosition = ring.clone().addScaledVector(dir, range);
-  const shipOrientation = noseToward(shipPosition, ring);
+  const shipOrientation = turnedOff(next, noseToward(shipPosition, ring));
 
   // Rocks: a probe world holds the structure so the hull test is the real one.
   const probe = createWorld();
