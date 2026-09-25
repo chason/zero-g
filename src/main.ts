@@ -1,12 +1,12 @@
 import { createRenderer } from './render';
 import { createHud } from './hud';
-import { createWorld, placeStructure, resetRun, step, STEP, type World, type StructureSpec } from './sim/world';
+import { createWorld, resetRun, step, STEP, type World, type StructureSpec } from './sim/world';
+import { generateScenario, applyScenario } from './sim/scenario';
 import capitalSpec from './data/capital.json';
 import { emptyCommand, resolve, type Command } from './control';
 import { createKeyboardMouse } from './input';
 import { createShip, type ShipSpec } from './sim/ship';
 import skiffSpec from './data/skiff.json';
-import { Vector3 } from './core/math';
 
 const renderer = createRenderer();
 const hud = createHud(document.getElementById('hud')!, renderer.camera);
@@ -17,13 +17,18 @@ const skiff = createShip(skiffSpec as ShipSpec);
 const world: World = createWorld([skiff]);
 // The docking ring (#25): 400 m dead ahead of the starting pose, stationary, 3 m contact
 // radius around its centre. The sim tests the ship's docking port against that radius
-// The Yarrow, a capital mining ship with twenty docking ports, placed so that the port
-// we are assigned — F6, on the forebody — is 400 m dead ahead with its ring facing us.
-// Every other port is drawn dim and will end the run as WRONG PORT if entered (#42).
-// Rolled 90° so her length lies across our view rather than standing on end.
-const { port: assignedPort } = placeStructure(world, capitalSpec as StructureSpec, 'F6', new Vector3(0, 0, -400), new Vector3(0, 0, 1), 90);
-world.assigned = assignedPort;
-world.selected = assignedPort;
+// The Yarrow, a capital mining ship with twenty docking ports. Each run is a scenario
+// from a seed: which port we are assigned (the side we are nearest), where we start
+// (350-450 m out, ring in front of us), and where the rocks are (#43). Enter rolls a
+// new one. The seed is logged so a start can be reproduced.
+const capital = capitalSpec as StructureSpec;
+let seed = (Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0;
+function newRun(): void {
+  resetRun(world);
+  applyScenario(world, capital, generateScenario(capital, seed), skiff);
+  console.info(`zero-g run seed ${seed}: assigned ${world.targets[world.assigned]?.name}`);
+}
+newRun();
 // One throttle slot per thruster on the ship we actually loaded. Reused every frame:
 // resolve() writes into it in place, so the flight loop allocates nothing.
 const command: Command = emptyCommand(skiff.prepared.length);
@@ -70,7 +75,10 @@ function frame() {
         world.selected = (world.selected + 1) % world.targets.length;
       }
       // Restart resets in place, so every reference below stays valid. Legal mid-run too.
-      if (axes.restart) resetRun(world);
+      if (axes.restart) {
+        seed = (seed * 1103515245 + 12345) >>> 0;
+        newRun();
+      }
       resolve(skiff, axes, command);
 
       while (accumulator >= STEP) {
@@ -97,5 +105,5 @@ requestAnimationFrame(frame);
 // Dev only: a handle for poking the running sim from the console — teleport the ship,
 // read the world, tune a constant. Stripped from production builds by Vite.
 if (import.meta.env.DEV) {
-  (window as unknown as { zeroG: unknown }).zeroG = { world, ship: skiff, renderer, resetRun: () => resetRun(world) };
+  (window as unknown as { zeroG: unknown }).zeroG = { world, ship: skiff, renderer, resetRun: newRun, replay: (s: number) => { seed = s >>> 0; newRun(); } };
 }

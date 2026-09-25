@@ -277,6 +277,35 @@ export function portStrokes(radius: number, tube: number, collar: number): Float
   return new Float32Array(out);
 }
 
+/**
+ * A rock as a vector display would draw it: a few great circles at odd angles, so it
+ * reads as a lumpy sphere rather than a globe. `circles` planes are spread around a
+ * golden-angle spiral for even coverage. Returns flat xyz pairs.
+ */
+export function sphereStrokes(radius: number, circles = 4, segments = 24): Float32Array {
+  const out: number[] = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let c = 0; c < circles; c++) {
+    // plane normal from a spiral on the sphere
+    const y = 1 - (2 * (c + 0.5)) / circles;
+    const r = Math.sqrt(1 - y * y);
+    const t = golden * c;
+    const n = new THREE.Vector3(r * Math.cos(t), y, r * Math.sin(t));
+    const a = Math.abs(n.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const u = new THREE.Vector3().crossVectors(n, a).normalize();
+    const v = new THREE.Vector3().crossVectors(n, u);
+    for (let i = 0; i < segments; i++) {
+      const p = (i / segments) * Math.PI * 2;
+      const q = ((i + 1) / segments) * Math.PI * 2;
+      out.push(
+        radius * (u.x * Math.cos(p) + v.x * Math.sin(p)), radius * (u.y * Math.cos(p) + v.y * Math.sin(p)), radius * (u.z * Math.cos(p) + v.z * Math.sin(p)),
+        radius * (u.x * Math.cos(q) + v.x * Math.sin(q)), radius * (u.y * Math.cos(q) + v.y * Math.sin(q)), radius * (u.z * Math.cos(q) + v.z * Math.sin(q)),
+      );
+    }
+  }
+  return new Float32Array(out);
+}
+
 /** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */
 export function projectedRadiusPx(radius: number, distance: number, fovDeg: number, viewportHeightPx: number): number {
   if (distance <= 0) return Infinity;

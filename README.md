@@ -92,6 +92,16 @@ and the Shuttle split a Rotational Hand Controller from a Translational one.
 | Both | Shift | all | fine control, 15% output |
 | Both | Space | all | cut all thrusters |
 
+## Each run
+
+A run is a scenario generated from a seed: the *Yarrow* sits at the origin, a random
+bearing picks the docking port on the side you are nearest, you start 350–450 m out
+along that port's axis with your nose on the ring, and forty rocks are scattered about
+the approach — clear of your start, every port, and the hull. Enter rolls a new one.
+
+The seed is logged to the console at the start of each run. In a dev build,
+`zeroG.replay(seed)` in the console reproduces a start exactly.
+
 ## Falling into zero
 
 Three different things, only one of which is assist:
