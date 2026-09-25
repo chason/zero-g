@@ -59,19 +59,32 @@ export function createRenderer(): Renderer {
 
   const camOffset = new THREE.Vector3(0, 2.2, 11);
   const smoothed = new THREE.Quaternion();
+  // Scratch space for the per-frame pose. draw() runs at display rate and allocates nothing.
+  const offset = new THREE.Vector3();
 
   function draw(world: World, alpha: number) {
     const s = world.ships[0];
     if (s) {
-      // TODO: interpolate between the previous and current physics state using `alpha`
-      //       (lerp position, slerp orientation) or 240Hz displays will judder.
-      void alpha;
-      ship.position.copy(s.body.position as unknown as THREE.Vector3);
-      ship.quaternion.copy(s.body.orientation as unknown as THREE.Quaternion);
+      // Physics ran at a fixed STEP; this frame falls `alpha` of the way from the pose at
+      // the start of the last step to the pose at its end. Interpolating between the two
+      // is what stops a 144 or 240 Hz display from showing the same pose on consecutive
+      // frames. Clamped because a halted sim keeps accumulating time without stepping.
+      const t = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+      const { previous, position, orientation } = s.body;
+      ship.position.lerpVectors(
+        previous.position as unknown as THREE.Vector3,
+        position as unknown as THREE.Vector3,
+        t,
+      );
+      ship.quaternion.slerpQuaternions(
+        previous.orientation as unknown as THREE.Quaternion,
+        orientation as unknown as THREE.Quaternion,
+        t,
+      );
 
       // Camera lag: trail the ship's rotation slightly instead of following rigidly.
       smoothed.slerp(ship.quaternion, 0.12);
-      camera.position.copy(ship.position).add(camOffset.clone().applyQuaternion(smoothed));
+      camera.position.copy(ship.position).add(offset.copy(camOffset).applyQuaternion(smoothed));
       camera.quaternion.copy(smoothed);
 
       // Wrap the dust field around the camera so parallax exists everywhere.
