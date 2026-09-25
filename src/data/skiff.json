@@ -2,7 +2,7 @@
   "name": "Skiff",
   "dryMass": 4000,
   "inertia": [9000, 9000, 2400],
-  "seatOffset": [0, 0.4, -2.0],
+  "seatOffset": [0, 0.8, -2.0],
   "dockingPort": [0, 0, -2.6],
   "hullRadius": 2.6,
   "propellantCapacity": 900,
