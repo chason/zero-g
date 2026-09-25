@@ -199,16 +199,28 @@ describe('the hull blocks the far side', () => {
 });
 
 describe('turning sections', () => {
-  it('the refinery turns at its data rate, nothing else moves, and it freezes with the run', () => {
+  it('the refinery turns at its data rate, its outer drums the other way and faster, nothing else moves, and it freezes with the run (#57)', () => {
     const world = capitalWorld();
     withShip(world, RING.clone().addScaledVector(OPEN, 100));
     const s = world.structures[0]!;
     const i = s.hull.findIndex((h) => h.label === 'refinery');
     expect(s.hull[i]!.spinDegPerSec).toBe(6);
+    // the drums either side of it are the same radius, so the seams show the counter-rotation
+    const drums = [i - 1, i + 1];
+    for (const d of drums) {
+      expect(s.hull[d]!.label).toMatch(/refinery .* drum/);
+      expect(s.hull[d]!.radius).toBe(s.hull[i]!.radius);
+      expect(Math.sign(s.hull[d]!.spinDegPerSec!)).toBe(-Math.sign(s.hull[i]!.spinDegPerSec!));
+      expect(Math.abs(s.hull[d]!.spinDegPerSec!)).toBeGreaterThan(Math.abs(s.hull[i]!.spinDegPerSec!));
+      expect(Math.abs(s.hull[d]!.spinDegPerSec!)).toBeLessThan(2 * Math.abs(s.hull[i]!.spinDegPerSec!)); // slightly faster, not a blur
+    }
+    expect(s.hull[i - 1]!.to).toBe(s.hull[i]!.from);
+    expect(s.hull[i + 1]!.from).toBe(s.hull[i]!.to);
     expect(s.spinAngle.every((a) => a === 0)).toBe(true);
     run(world, 120); // one second
     expect(s.spinAngle[i]).toBeCloseTo((6 * Math.PI) / 180, 6);
-    s.spinAngle.forEach((a, k) => { if (k !== i) expect(a).toBe(0); });
+    for (const d of drums) expect(s.spinAngle[d]).toBeCloseTo((s.hull[d]!.spinDegPerSec! * Math.PI) / 180, 6);
+    s.spinAngle.forEach((a, k) => { if (k !== i && !drums.includes(k)) expect(a).toBe(0); });
     // a turning cylinder is the same cylinder to the strike test
     const inside = new Vector3(20, 0, 170).applyQuaternion(s.orientation).add(s.position);
     expect(structureStrike(s, inside, R)).toBe('refinery');
