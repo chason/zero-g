@@ -7,21 +7,43 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
  * Vector-monitor line rendering.
  *
  * A real vector display draws a bright thin stroke that the phosphor spreads into a
- * halo. WebGL's built-in lines are one device pixel wide and cannot be widened, so the
- * stroke is drawn with the "fat line" addon (a screen-space quad per segment, width in
- * CSS pixels) and the halo comes from the bloom stage in post.ts. Normal blending, not
- * additive: additive is the more literal CRT model, but a ring 400 m away collapses its
- * few hundred segments into a five-pixel disc, and the sum blooms into a blob that
- * swallows the target bracket. Bloom on a capped stroke gives the halo without that.
+ * halo. WebGL's built-in lines are one device pixel wide and cannot be widened, so
+ * strokes use the "fat line" addon (a screen-space quad per segment, width in CSS
+ * pixels).
+ *
+ * The glow is PART OF THE STROKE, not a screen-space blur. Every stroke is drawn in
+ * tiers — a bright core, then wider and dimmer bands — all with normal blending. Where
+ * lines pile up (a ring far away, a tunnel's vanishing point) the halos converge on the
+ * halo colour and stop; they cannot sum past it. A bloom pass cannot do this: it blurs
+ * whatever is there, so density always becomes halo, and a distant ring becomes a sun.
+ * Nor does this need level-of-detail switching, and so nothing pops. Issue #39.
  *
  * Only silhouette and crease edges are drawn (EdgesGeometry), not triangle wireframes:
- * a cone is twelve spokes and a rim, not a fan of diagonals. Issue #36.
+ * a cone is twelve spokes and a rim, not a fan of diagonals.
  */
 
-/** Stroke width in CSS pixels. Phosphor, not a hairline. */
-export const STROKE_PX = 1.6;
+/**
+ * Glow tiers: [width in CSS px, opacity], core first. Widths grow, opacities fall,
+ * roughly a gaussian sampled five times. The core is tinted toward white (CORE_WHITE)
+ * and the bands carry the colour — that is what neon looks like: a white-hot centre in
+ * a coloured glow.
+ */
+export const GLOW_TIERS: ReadonlyArray<readonly [number, number]> = [
+  [1.5, 1.0],
+  [3.5, 0.45],
+  [6.5, 0.22],
+  [11, 0.11],
+  [18, 0.05],
+];
+/** How far the core tier is pushed toward white, 0..1. */
+export const CORE_WHITE = 0.55;
 /** Edges between faces meeting at less than this angle are not drawn (degrees). */
 export const CREASE_DEG = 10;
+/** Distant strokes fade toward this floor so a far target is a mark, not a glare. */
+export const FAR_MIN_OPACITY = 0.5;
+/** Fade begins below this projected radius (px) and reaches the floor at FAR_MIN_PX. */
+export const FAR_FADE_PX = 12;
+export const FAR_MIN_PX = 2;
 
 const materials = new Set<LineMaterial>();
 const resolution = new THREE.Vector2(1, 1);
@@ -40,27 +62,80 @@ export function edgeSegmentCount(geometry: THREE.BufferGeometry, creaseDeg = CRE
   return n;
 }
 
+/** A tiered glowing stroke set. `group` is what you add to the scene. */
+export interface VectorStrokes {
+  group: THREE.Group;
+  /** one LineSegments2 per glow tier, core first, sharing one geometry */
+  tiers: LineSegments2[];
+  /** scale every tier's opacity by 0..1 — used to fade distant objects; allocation-free */
+  setFade(fade: number): void;
+  dispose(): void;
+}
+
+function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation): VectorStrokes {
+  const group = new THREE.Group();
+  const tiers: LineSegments2[] = [];
+  const base = new THREE.Color(color);
+  const core = base.clone().lerp(new THREE.Color(0xffffff), CORE_WHITE);
+  GLOW_TIERS.forEach(([width, opacity], i) => {
+    const material = new LineMaterial({
+      color: i === 0 ? core : base,
+      linewidth: width,
+      worldUnits: false,
+      transparent: true,
+      opacity,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+    });
+    material.resolution.copy(resolution);
+    materials.add(material);
+    const lines = new LineSegments2(fat, material);
+    lines.computeLineDistances();
+    // Widest band first, core last, so the core sits on top of its own halo.
+    lines.renderOrder = -i;
+    group.add(lines);
+    tiers.push(lines);
+  });
+  let lastFade = 1;
+  return {
+    group,
+    tiers,
+    setFade(fade) {
+      const f = Math.max(0, Math.min(1, fade));
+      if (f === lastFade) return;
+      lastFade = f;
+      tiers.forEach((t, i) => {
+        (t.material as LineMaterial).opacity = GLOW_TIERS[i]![1] * f;
+      });
+    },
+    dispose() {
+      for (const t of tiers) {
+        const m = t.material as LineMaterial;
+        materials.delete(m);
+        m.dispose();
+      }
+      fat.dispose();
+    },
+  };
+}
+
+/** Silhouette and crease edges of a mesh geometry, as glowing strokes. */
 export function createVectorLines(
   geometry: THREE.BufferGeometry,
   color: THREE.ColorRepresentation,
   creaseDeg = CREASE_DEG,
-): LineSegments2 {
+): VectorStrokes {
   const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
   const fat = new LineSegmentsGeometry().fromEdgesGeometry(edges);
   edges.dispose();
-  const material = new LineMaterial({
-    color,
-    linewidth: STROKE_PX,
-    worldUnits: false,
-    transparent: true,
-    blending: THREE.NormalBlending,
-    depthWrite: false,
-  });
-  material.resolution.copy(resolution);
-  materials.add(material);
-  const lines = new LineSegments2(fat, material);
-  lines.computeLineDistances();
-  return lines;
+  return buildTiers(fat, color);
+}
+
+/** Glowing strokes from explicit segment pairs (flat xyz, two points per segment). */
+export function createVectorStrokes(segments: Float32Array, color: THREE.ColorRepresentation): VectorStrokes {
+  const fat = new LineSegmentsGeometry();
+  fat.setPositions(segments);
+  return buildTiers(fat, color);
 }
 
 /**
@@ -80,7 +155,6 @@ export function torusStrokes(
   const out: number[] = [];
   const push = (a: number, b: number, c: number, x: number, y: number, z: number) => out.push(a, b, c, x, y, z);
   const point = (u: number, v: number): [number, number, number] => {
-    // u around the ring, v around the tube; same parametrisation as THREE.TorusGeometry
     const cx = (radius + tube * Math.cos(v)) * Math.cos(u);
     const cy = (radius + tube * Math.cos(v)) * Math.sin(u);
     const cz = tube * Math.sin(v);
@@ -105,45 +179,6 @@ export function torusStrokes(
   return new Float32Array(out);
 }
 
-/** Fat lines from explicit segment pairs (flat xyz, two points per segment). */
-export function createVectorStrokes(segments: Float32Array, color: THREE.ColorRepresentation): LineSegments2 {
-  const fat = new LineSegmentsGeometry();
-  fat.setPositions(segments);
-  const material = new LineMaterial({
-    color,
-    linewidth: STROKE_PX,
-    worldUnits: false,
-    transparent: true,
-    blending: THREE.NormalBlending,
-    depthWrite: false,
-  });
-  material.resolution.copy(resolution);
-  materials.add(material);
-  const lines = new LineSegments2(fat, material);
-  lines.computeLineDistances();
-  return lines;
-}
-
-// ---------------------------------------------------------------------------------------
-// Level of detail. A vector display cannot draw fewer strokes as a thing recedes, but it
-// should: a torus 400 m away is a circle, and drawing all 340 segments of it inside a
-// five-pixel disc gives the bloom a solid blob to spread. Levels switch on the ring's
-// projected radius in pixels, and the strokes fade as the ring gets small so a distant
-// target is a dim mark, not a sun.
-// ---------------------------------------------------------------------------------------
-
-/**
- * Projected TUBE radius (px) at which each ring level becomes the one drawn. Keyed on
- * the tube, not the ring: hoops around the tube only read once the tube itself is a
- * few pixels wide; before that they pile into a solid band that blooms like a sun.
- */
-export const RING_LOD_TUBE_PX: readonly [number, number, number] = [0, 2.5, 12];
-/** Below this projected radius the strokes start to fade; at RING_FADE_MIN_PX they are dimmest. */
-export const RING_FADE_PX = 10;
-export const RING_FADE_MIN_PX = 2;
-/** Dimmest a distant ring is allowed to get; it must stay findable. */
-export const RING_MIN_OPACITY = 0.35;
-
 /** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */
 export function projectedRadiusPx(radius: number, distance: number, fovDeg: number, viewportHeightPx: number): number {
   if (distance <= 0) return Infinity;
@@ -151,64 +186,12 @@ export function projectedRadiusPx(radius: number, distance: number, fovDeg: numb
   return (radius / distance) * focal;
 }
 
-/** Which of the three ring levels to draw for a projected TUBE radius. */
-export function ringLodLevel(tubePx: number): 0 | 1 | 2 {
-  if (tubePx >= RING_LOD_TUBE_PX[2]) return 2;
-  if (tubePx >= RING_LOD_TUBE_PX[1]) return 1;
-  return 0;
-}
-
-/** Stroke opacity for a projected radius: full when large, dimming toward the minimum when tiny. */
-export function ringOpacity(px: number): number {
-  if (px >= RING_FADE_PX) return 1;
-  const t = Math.max(0, (px - RING_FADE_MIN_PX) / (RING_FADE_PX - RING_FADE_MIN_PX));
-  return RING_MIN_OPACITY + (1 - RING_MIN_OPACITY) * t;
-}
-
-export interface VectorRing {
-  group: THREE.Group;
-  /** far: one circle; mid: outer+inner circles and a few hoops; near: the full lattice */
-  levels: [LineSegments2, LineSegments2, LineSegments2];
-  /** Pick the level and opacity for this frame from the ring's projected radius; allocation-free. */
-  update(projectedRingPx: number): void;
-  dispose(): void;
-}
-
-export function createVectorRing(radius: number, tube: number, color: THREE.ColorRepresentation): VectorRing {
-  const levels: [LineSegments2, LineSegments2, LineSegments2] = [
-    createVectorStrokes(torusStrokes(radius, tube, 0, 1, 8, 48), color),
-    createVectorStrokes(torusStrokes(radius, tube, 8, 2, 8, 48), color),
-    createVectorStrokes(torusStrokes(radius, tube, 16, 4, 8, 48), color),
-  ];
-  const tubeRatio = tube / radius;
-  const group = new THREE.Group();
-  for (const l of levels) group.add(l);
-  let shown = -1;
-  let lastOpacity = -1;
-  return {
-    group,
-    levels,
-    update(px) {
-      const level = ringLodLevel(px * tubeRatio);
-      if (level !== shown) {
-        for (let i = 0; i < 3; i++) levels[i]!.visible = i === level;
-        shown = level;
-      }
-      const opacity = ringOpacity(px);
-      if (opacity !== lastOpacity) {
-        (levels[level].material as LineMaterial).opacity = opacity;
-        lastOpacity = opacity;
-      }
-    },
-    dispose() {
-      for (const l of levels) disposeVectorLines(l);
-    },
-  };
-}
-
-export function disposeVectorLines(lines: LineSegments2): void {
-  lines.geometry.dispose();
-  const m = lines.material as LineMaterial;
-  materials.delete(m);
-  m.dispose();
+/**
+ * Fade for a distant object from its projected radius: 1 when it is large, easing to
+ * FAR_MIN_OPACITY as it shrinks to a few pixels. Continuous, so nothing pops.
+ */
+export function farFade(px: number): number {
+  if (px >= FAR_FADE_PX) return 1;
+  const t = Math.max(0, (px - FAR_MIN_PX) / (FAR_FADE_PX - FAR_MIN_PX));
+  return FAR_MIN_OPACITY + (1 - FAR_MIN_OPACITY) * t;
 }

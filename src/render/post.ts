@@ -17,11 +17,9 @@ import type { World } from '../sim/world';
  * light switch.
  *
  * The look comes first in the chain: a phosphor-persistence pass keeps a fading trace
- * of the last frame, then bloom spreads every bright stroke into a halo, the way a CRT
- * beam bleeds into the phosphor around it. The blackout is the last stage because it
- * also performs the sRGB encode for the screen. The pipeline always runs now — with the
- * bloom on there is no cheaper path — and at a full reserve the blackout stage is an
- * identity.
+ * of the last frame, and an optional bloom (off by default; the strokes carry their own
+ * halo). The blackout is the last stage because it also performs the sRGB encode for
+ * the screen. At a full reserve it is an identity.
  *
  * The pure parts — the reserve → effect-strength curve and the lag — are exported below
  * and specified by test/post.test.ts. The GL parts run only in a browser and are checked
@@ -100,8 +98,13 @@ export const SETTLE = 1e-3;
 // Vector-monitor look (#36). All exported so the feel can be tuned without reading code.
 // ---------------------------------------------------------------------------------------
 
-/** Bloom: how much halo the strokes throw. */
-export const BLOOM_STRENGTH = 0.9;
+/**
+ * Bloom: a screen-space blur. Off by default (0) — the glow lives in the strokes
+ * themselves (see vector.ts), which is bounded where lines pile up; a blur is not, and
+ * turned a distant ring into a sun. Left available as a knob for anyone who wants a
+ * little extra on top.
+ */
+export const BLOOM_STRENGTH = 0;
 /** Bloom: halo spread, 0..1. */
 export const BLOOM_RADIUS = 0.3;
 /** Bloom: luminance above which a pixel blooms. Low, because the scene is mostly black. */
@@ -241,7 +244,7 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
   );
   composer.addPass(renderPass);
   if (PHOSPHOR_DECAY > 0) composer.addPass(afterimage);
-  composer.addPass(bloom);
+  if (BLOOM_STRENGTH > 0) composer.addPass(bloom);
   composer.addPass(blackout);
 
   function fit(): void {
