@@ -33,6 +33,26 @@ export interface Contact {
   time: number;
 }
 
+/**
+ * How a run ends (#26). 'dock' and 'crash' are the two readings of a contact; 'blackout'
+ * is the pilot's health reaching zero with no contact made. A run has exactly one.
+ */
+export type RunOutcome = 'dock' | 'crash' | 'blackout';
+
+/** What the run summary shows once the outcome is decided. Filled at that step, never after. */
+export interface RunSummary {
+  /** world.time at the outcome, seconds */
+  time: number;
+  /** kg burned this run: capacity minus what is left in the tanks */
+  propellantUsed: number;
+  /** highest g the pilot felt this run */
+  peakG: number;
+  /** m/s at contact; only for 'dock' and 'crash' */
+  contactSpeed?: number;
+  /** deg/s at contact; only for 'dock' and 'crash' */
+  contactRotation?: number;
+}
+
 export interface World {
   ships: Ship[];
   /** all selectable targets; Tab cycles (#21) */
@@ -43,16 +63,35 @@ export interface World {
   time: number;
   /** the first docking-port contact this run, or null while still flying (#25) */
   contact: Contact | null;
+  /** null while the run is live; once set the sim is frozen and only time advances (#26) */
+  outcome: RunOutcome | null;
+  /** the figures the run ended with, set together with outcome (#26) */
+  summary: RunSummary | null;
 }
 
 /** Physics runs here and nowhere else, at a constant rate, independent of frame rate. */
 export const STEP = 1 / 120;
 
 export function createWorld(ships: Ship[] = []): World {
-  return { ships, targets: [], selected: -1, time: 0, contact: null };
+  return { ships, targets: [], selected: -1, time: 0, contact: null, outcome: null, summary: null };
 }
 
 const RAD_TO_DEG = 180 / Math.PI;
+
+/**
+ * A contact is a dock when it is at or under BOTH of these; over either, it is a crash.
+ * Speed is relative to the target; rotation is the magnitude of the body rate, in the
+ * HUD's unit so the player is judged on the number they were reading.
+ *
+ * The rotation state clamp in body.ts (OMEGA_EPSILON, 0.0003 rad/s = 0.017 deg/s) sits
+ * two orders of magnitude under the rotation limit, and the speed readout's display
+ * rounding (0.01 m/s) is not a state clamp at all. Neither can decide an outcome: a
+ * rate the clamp zeroes was already a hundred times too small to matter, so the cheat
+ * stays a resolution floor and never a flight assist. test/docking.test.ts asserts the
+ * relationship; keep it at least an order of magnitude whatever these are tuned to.
+ */
+export const DOCK_MAX_SPEED = 0.5;
+export const DOCK_MAX_ROTATION_DEG_PER_SEC = 2;
 
 /**
  * Radius of the v1 play space, in metres: no ship or target may be further than this from
@@ -152,13 +191,76 @@ function detectContact(world: World): void {
 }
 
 /**
+ * Decide the run from what the step just produced, and freeze it if it is over.
+ *
+ * A contact is judged on the numbers recorded at the instant it happened, against the
+ * limits above. Without a contact, a pilot at zero health is a blackout. A contact and
+ * a blackout on the same step read as the contact: the ship arrived, and how it arrived
+ * is the more specific verdict. The summary is taken from the player's ship (ships[0]),
+ * which is the ship the renderer and HUD already assume.
+ *
+ * Throttles are closed at the outcome so nothing downstream — plumes, the thruster
+ * schematic — shows a frozen ship as still firing. The command keeps arriving from the
+ * input layer; the frozen step simply never applies it.
+ */
+function resolveOutcome(world: World): void {
+  const { contact } = world;
+  if (contact !== null) {
+    const clean =
+      contact.relativeSpeed <= DOCK_MAX_SPEED &&
+      contact.residualRotationDegPerSec <= DOCK_MAX_ROTATION_DEG_PER_SEC;
+    endRun(world, clean ? 'dock' : 'crash', contact);
+    return;
+  }
+  for (const ship of world.ships) {
+    if (ship.pilot && ship.pilot.health <= 0) {
+      endRun(world, 'blackout', null);
+      return;
+    }
+  }
+}
+
+function endRun(world: World, outcome: RunOutcome, contact: Contact | null): void {
+  const player = world.ships[0];
+  const summary: RunSummary = {
+    time: world.time,
+    propellantUsed: player ? player.spec.propellantCapacity - player.propellant : 0,
+    peakG: player?.pilot?.peakG ?? 0,
+  };
+  if (contact !== null) {
+    summary.contactSpeed = contact.relativeSpeed;
+    summary.contactRotation = contact.residualRotationDegPerSec;
+  }
+  world.outcome = outcome;
+  world.summary = summary;
+  for (const ship of world.ships) {
+    ship.throttles.fill(0);
+    // integrate() will not run again, so `previous` would stay a step behind the final
+    // pose and the renderer's alpha lerp would wobble a frozen ship by up to one step of
+    // travel every frame. Pin it to the pose the run ended on.
+    ship.body.previous.position.copy(ship.body.position);
+    ship.body.previous.orientation.copy(ship.body.orientation);
+  }
+}
+
+/**
  * Advance the whole world by exactly `dt` seconds. Never call with a variable dt.
  *
  * Order is load-bearing. Mass is read fresh at the top of every step and the
  * propellant burn is subtracted only AFTER integration, so a ship accelerates
  * harder as its tanks empty instead of coasting on a mass cached at load time.
+ *
+ * A decided run is frozen: no throttles applied, no integration, no burn, no pilot
+ * pass. Only the clock advances, because the HUD's lag and the blackout fade are
+ * driven off world.time and must keep settling on the final frame. Restarting is a
+ * later issue; this function never un-freezes a world.
  */
 export function step(world: World, command: Command, dt: number): void {
+  if (world.outcome !== null) {
+    world.time += dt;
+    return;
+  }
+
   for (const ship of world.ships) {
     // 1. apply the incoming command to this ship's throttles
     const { throttles } = ship;
@@ -197,6 +299,9 @@ export function step(world: World, command: Command, dt: number): void {
       scratchSeat.set(seat[0], seat[1], seat[2]);
       const felt = feltAcceleration(ship.body, scratchSeat, wrench);
       stepPilot(pilot, felt.length() / G0, dt);
+      // Peak for the run summary (#26): tracked here rather than in stepPilot, which
+      // owns the tolerance dynamics and nothing else.
+      if (pilot.gLoad > pilot.peakG) pilot.peakG = pilot.gLoad;
     }
   }
 
@@ -205,6 +310,10 @@ export function step(world: World, command: Command, dt: number): void {
   // 6. contact (#25): tested against the pose the integration above just produced, and
   //    stamped with the time that pose belongs to, which is why this follows the clock.
   detectContact(world);
+
+  // 7. outcome (#26): a contact is judged at once, on the numbers it was recorded with;
+  //    otherwise a pilot at zero health ends the run. Either freezes every later step.
+  resolveOutcome(world);
 
   assertWithinPlaySpace(world);
 }

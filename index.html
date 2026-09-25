@@ -67,6 +67,17 @@
       /* lit copy per thruster; the instrument writes each one's opacity from its throttle */
       #hud .inst-thrusters .thr-on { fill: none; stroke: #eafff7; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 3px #7fd4c1); }
       #hud .inst-thrusters .thr-on .thr-dot { fill: #eafff7; stroke: none; }
+      /* #26 run summary: centred panel, hidden until the sim has decided the run */
+      #hud .inst-summary {
+        left: 50%; top: 50%; transform: translate(-50%, -50%);
+        padding: 14px 20px; border: 1px solid currentColor; background: rgba(5, 6, 10, .78);
+        font-variant-numeric: tabular-nums;
+      }
+      #hud .inst-summary .sum-head { font-size: 28px; line-height: 1.2; letter-spacing: .18em; font-weight: 700; text-align: center; margin-bottom: 10px; }
+      #hud .inst-summary.sum-dock .sum-head { color: #a8ff9e; }
+      #hud .inst-summary.sum-crash .sum-head, #hud .inst-summary.sum-blackout .sum-head { color: #ffb347; }
+      /* the row that broke a docking limit */
+      #hud .inst-summary .sum-over { color: #ffb347; font-weight: 700; }
     </style>
   </head>
   <body>

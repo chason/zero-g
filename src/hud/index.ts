@@ -7,6 +7,7 @@ import { createMarkers } from './instruments/markers';
 import { createTarget } from './instruments/target';
 import { createPropellant } from './instruments/propellant';
 import { createThrusters } from './instruments/thrusters';
+import { createSummary } from './instruments/summary';
 
 /**
  * In a no-assist game the HUD is the primary instrument, not decoration. A pilot who
@@ -31,6 +32,7 @@ export function createHud(root: HTMLElement, camera: PerspectiveCamera): Hud {
     createTarget(),
     createPropellant(),
     createThrusters(),
+    createSummary(),
   ];
   for (const inst of instruments) inst.mount(root);
 

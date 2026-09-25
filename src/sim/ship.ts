@@ -57,10 +57,12 @@ export interface Pilot {
   health: number;
   /** current felt acceleration at the seat, in g */
   gLoad: number;
+  /** highest gLoad seen this run, for the run summary (#26). Never falls. */
+  peakG: number;
 }
 
 export function createPilot(): Pilot {
-  return { reserve: 1, health: 1, gLoad: 0 };
+  return { reserve: 1, health: 1, gLoad: 0, peakG: 0 };
 }
 
 export interface Ship {

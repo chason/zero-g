@@ -1,8 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3, Quaternion } from '../src/core/math';
-import { createWorld, step, STEP, type Target, type World } from '../src/sim/world';
-import { createShip, dockingPortPosition } from '../src/sim/ship';
+import {
+  createWorld,
+  step,
+  STEP,
+  DOCK_MAX_SPEED,
+  DOCK_MAX_ROTATION_DEG_PER_SEC,
+  type Target,
+  type World,
+} from '../src/sim/world';
+import { createShip, createPilot, dockingPortPosition } from '../src/sim/ship';
 import type { ShipSpec, Ship } from '../src/sim/ship';
+import { OMEGA_EPSILON } from '../src/sim/body';
+import { RAD_TO_DEG } from '../src/hud/instrument';
+import { SPEED_RESOLUTION } from '../src/hud/instruments/velocity';
+import { summaryFields, freshSummaryFields, OUTCOME_LABELS } from '../src/hud/instruments/summary';
 import { emptyCommand } from '../src/control';
 import skiff from '../src/data/skiff.json';
 
@@ -186,14 +198,308 @@ describe('contact detection (#25)', () => {
   });
 
   it('does not touch the body: contact has no collision response', () => {
-    const { world, ship } = approach(0.1, 2);
-    run(world, 20);
-    expect(world.contact).not.toBeNull();
-    const v = ship.body.velocity.clone();
-    const w = ship.body.angularVelocity.clone();
-    // one more step with the contact already recorded: the body is untouched by the check
+    const spin = new Vector3(0, 0.5 * DEG, 0);
+    const { world, ship } = approach(0.1, 2, spin);
+    runUntilContact(world);
+    // Coasting, so the integration leaves velocity exactly alone; a collision response
+    // would be the only thing that could have changed it on the contact step. The spin
+    // is about a principal axis, so it too is exactly what it was.
+    expect(ship.body.velocity.x).toBe(0);
+    expect(ship.body.velocity.y).toBe(0);
+    expect(ship.body.velocity.z).toBe(-2);
+    expect(ship.body.angularVelocity.distanceTo(spin)).toBe(0);
+  });
+});
+
+// --- outcomes (#26) -----------------------------------------------------------------
+
+describe('run outcome: the docking limits (#26)', () => {
+  it('are the numbers the issue names', () => {
+    expect(DOCK_MAX_SPEED).toBe(0.5);
+    expect(DOCK_MAX_ROTATION_DEG_PER_SEC).toBe(2);
+  });
+
+  it('sit at least an order of magnitude above every clamp and display floor', () => {
+    // The rotation state clamp can zero a rate; it must never be able to decide a run.
+    expect(OMEGA_EPSILON * RAD_TO_DEG * 10).toBeLessThan(2);
+    expect(OMEGA_EPSILON * RAD_TO_DEG * 10).toBeLessThan(DOCK_MAX_ROTATION_DEG_PER_SEC);
+    // Speed has no state clamp at all; its display rounding is still far under the limit.
+    expect(SPEED_RESOLUTION * 10).toBeLessThan(DOCK_MAX_SPEED);
+  });
+});
+
+describe('run outcome: contact (#26)', () => {
+  it('is null while the ship is still flying', () => {
+    const { world } = approach(50, 1);
+    run(world, 30);
+    expect(world.outcome).toBeNull();
+    expect(world.summary).toBeNull();
+  });
+
+  it('slow and straight is a dock', () => {
+    const { world } = approach(gapForStep(20, 0.3), 0.3);
+    run(world, 19);
+    expect(world.outcome).toBeNull();
     run(world, 1);
-    expect(ship.body.velocity.z).toBeLessThanOrEqual(v.z);
-    expect(ship.body.angularVelocity.distanceTo(w)).toBe(0);
+    expect(world.outcome).toBe('dock');
+  });
+
+  it('a contact exactly at the speed limit is still a dock: the limit is inclusive', () => {
+    const { world } = approach(gapForStep(20, DOCK_MAX_SPEED), DOCK_MAX_SPEED);
+    run(world, 20);
+    expect(world.contact!.relativeSpeed).toBe(DOCK_MAX_SPEED);
+    expect(world.outcome).toBe('dock');
+  });
+
+  it('fast is a crash, however straight', () => {
+    const { world } = approach(gapForStep(20, 3), 3);
+    run(world, 20);
+    expect(world.outcome).toBe('crash');
+    expect(world.summary!.contactSpeed).toBeCloseTo(3, 9);
+  });
+
+  it('slow but spinning at 3 deg/s is a crash', () => {
+    const { world } = approach(gapForStep(20, 0.3), 0.3, new Vector3(0, 3 * DEG, 0));
+    runUntilContact(world);
+    expect(world.outcome).toBe('crash');
+    expect(world.summary!.contactRotation).toBeCloseTo(3, 6);
+    expect(world.summary!.contactSpeed).toBeCloseTo(0.3, 9);
+  });
+
+  it('slow and spinning at 1 deg/s is a dock', () => {
+    const { world } = approach(gapForStep(20, 0.3), 0.3, new Vector3(1 * DEG, 0, 0));
+    runUntilContact(world);
+    expect(world.outcome).toBe('dock');
+    expect(world.summary!.contactRotation).toBeCloseTo(1, 6);
+  });
+
+  it('is decided on the same step as the contact, from the contact record', () => {
+    const { world } = approach(gapForStep(20, 0.3), 0.3);
+    const n = runUntilContact(world);
+    expect(n).toBe(20);
+    expect(world.outcome).not.toBeNull();
+    expect(world.summary!.time).toBe(world.contact!.time);
+    expect(world.summary!.contactSpeed).toBe(world.contact!.relativeSpeed);
+    expect(world.summary!.contactRotation).toBe(world.contact!.residualRotationDegPerSec);
+  });
+
+  it('closes the throttles at the outcome so nothing shows a frozen ship still firing', () => {
+    const { world, ship } = approach(5, 0.3);
+    const cmd = emptyCommand(ship.prepared.length);
+    cmd.throttles[ship.prepared.findIndex((p) => p.spec.id === 'main')] = 1;
+    for (let i = 0; i < 19; i++) step(world, cmd, STEP);
+    expect(world.outcome).toBeNull();
+    expect(Array.from(ship.throttles).some((t) => t > 0)).toBe(true);
+    // keep the engine lit all the way in: the step that decides the run closes it anyway
+    for (let i = 0; i < 5000 && world.outcome === null; i++) step(world, cmd, STEP);
+    expect(world.outcome).not.toBeNull();
+    expect(Array.from(ship.throttles).every((t) => t === 0)).toBe(true);
+  });
+});
+
+describe('run outcome: blackout (#26)', () => {
+  it('a pilot at zero health ends the run on the next step, with no contact', () => {
+    const { world, ship } = approach(50, 0);
+    ship.pilot!.health = 0;
+    expect(world.outcome).toBeNull();
+    run(world, 1);
+    expect(world.outcome).toBe('blackout');
+    expect(world.contact).toBeNull();
+    expect(world.summary!.time).toBeCloseTo(STEP, 12);
+    expect(world.summary!.contactSpeed).toBeUndefined();
+    expect(world.summary!.contactRotation).toBeUndefined();
+  });
+
+  it('a ship with no pilot cannot black out', () => {
+    const { world, ship } = approach(50, 0);
+    delete ship.pilot;
+    run(world, 120);
+    expect(world.outcome).toBeNull();
+  });
+
+  it('a contact on the same step as the blackout reads as the contact', () => {
+    // port already inside the sphere: contact on the very first step
+    const { world, ship } = approach(-0.5, 0);
+    ship.pilot!.health = 0;
+    run(world, 1);
+    expect(world.contact).not.toBeNull();
+    expect(world.outcome).toBe('dock');
+  });
+});
+
+describe('run outcome: the frozen sim (#26)', () => {
+  function frozen(): { world: World; ship: Ship } {
+    const { world, ship } = approach(gapForStep(20, 3), 3, new Vector3(0, 1 * DEG, 0));
+    run(world, 20);
+    expect(world.outcome).toBe('crash');
+    return { world, ship };
+  }
+
+  it('stops integrating: position, velocity, orientation and spin never change again', () => {
+    const { world, ship } = frozen();
+    const position = ship.body.position.clone();
+    const velocity = ship.body.velocity.clone();
+    const orientation = ship.body.orientation.clone();
+    const spin = ship.body.angularVelocity.clone();
+    // full main engine and a yaw thruster pair demanded: the frozen step ignores them all
+    const cmd = emptyCommand(ship.prepared.length);
+    cmd.throttles.fill(1);
+    for (let i = 0; i < 240; i++) step(world, cmd, STEP);
+    expect(ship.body.position.distanceTo(position)).toBe(0);
+    expect(ship.body.velocity.distanceTo(velocity)).toBe(0);
+    expect(ship.body.orientation.equals(orientation)).toBe(true);
+    expect(ship.body.angularVelocity.distanceTo(spin)).toBe(0);
+    expect(Array.from(ship.throttles).every((t) => t === 0)).toBe(true);
+  });
+
+  it('burns no propellant and leaves the pilot alone', () => {
+    const { world, ship } = frozen();
+    const propellant = ship.propellant;
+    const pilot = { ...ship.pilot! };
+    const cmd = emptyCommand(ship.prepared.length);
+    cmd.throttles.fill(1);
+    for (let i = 0; i < 240; i++) step(world, cmd, STEP);
+    expect(ship.propellant).toBe(propellant);
+    expect(ship.pilot).toEqual(pilot);
+  });
+
+  it('pins the render-interpolation pose to the final one, so a frozen ship does not wobble', () => {
+    const { world, ship } = frozen();
+    expect(ship.body.previous.position.distanceTo(ship.body.position)).toBe(0);
+    expect(ship.body.previous.orientation.equals(ship.body.orientation)).toBe(true);
+    run(world, 10);
+    expect(ship.body.previous.position.distanceTo(ship.body.position)).toBe(0);
+  });
+
+  it('keeps the clock running so the HUD lag and the blackout fade can settle', () => {
+    const { world } = frozen();
+    const t = world.time;
+    run(world, 120);
+    expect(world.time).toBeCloseTo(t + 1, 9);
+  });
+
+  it('never changes its mind: outcome, summary and contact are the same objects afterwards', () => {
+    const { world } = frozen();
+    const { outcome, summary, contact } = world;
+    const summarySnapshot = { ...summary! };
+    run(world, 120);
+    expect(world.outcome).toBe(outcome);
+    expect(world.summary).toBe(summary);
+    expect(world.summary).toEqual(summarySnapshot);
+    expect(world.contact).toBe(contact);
+  });
+});
+
+describe('run summary figures (#26)', () => {
+  it('propellantUsed is capacity minus what is left in the tanks', () => {
+    const { world, ship } = approach(20, 0);
+    const cmd = emptyCommand(ship.prepared.length);
+    cmd.throttles[ship.prepared.findIndex((p) => p.spec.id === 'main')] = 1;
+    // half a second of main engine, then coast the rest of the way in
+    for (let i = 0; i < 60; i++) step(world, cmd, STEP);
+    expect(ship.propellant).toBeLessThan(spec.propellantCapacity);
+    runUntilContact(world);
+    expect(world.outcome).toBe('crash'); // ~4 m/s
+    expect(world.summary!.propellantUsed).toBeCloseTo(spec.propellantCapacity - ship.propellant, 12);
+    expect(world.summary!.propellantUsed).toBeGreaterThan(0);
+  });
+
+  it('peakG is at least every g the pilot felt, and exactly the largest', () => {
+    // A 2 rad/s ROLL keeps the port and the main engine on the spin axis, so the ship
+    // still arrives, while the seat's 0.4 m offset from that axis feels a steady ~0.16 g.
+    // A short main burn on top of it makes the peak an earlier, larger figure than the
+    // value at contact, so the test tells a running maximum from a final reading.
+    const { world, ship } = approach(20, 0, new Vector3(0, 0, 2));
+    const cmd = emptyCommand(ship.prepared.length);
+    const main = ship.prepared.findIndex((p) => p.spec.id === 'main');
+    let seen = 0;
+    const sample = () => { seen = Math.max(seen, ship.pilot!.gLoad); };
+    cmd.throttles[main] = 1;
+    for (let i = 0; i < 30; i++) { step(world, cmd, STEP); sample(); }
+    const afterBurn = seen;
+    cmd.throttles[main] = 0;
+    for (let i = 0; i < 5000 && world.outcome === null; i++) { step(world, cmd, STEP); sample(); }
+    expect(world.outcome).not.toBeNull();
+    expect(seen).toBeGreaterThan(0);
+    expect(seen).toBe(afterBurn);
+    expect(ship.pilot!.gLoad).toBeLessThan(seen);
+    expect(world.summary!.peakG).toBeGreaterThanOrEqual(seen);
+    expect(world.summary!.peakG).toBe(seen);
+    expect(ship.pilot!.peakG).toBe(seen);
+    // and the pilot's own record never fell below anything it saw
+    expect(ship.pilot!.peakG).toBeGreaterThanOrEqual(ship.pilot!.gLoad);
+  });
+
+  it('a fresh pilot starts with a zero peak', () => {
+    expect(createPilot().peakG).toBe(0);
+    expect(createShip(spec).pilot!.peakG).toBe(0);
+  });
+});
+
+describe('run summary instrument fields (#26)', () => {
+  it('is null while the run is live, so the panel stays hidden', () => {
+    const { world } = approach(50, 1);
+    expect(summaryFields(world, freshSummaryFields())).toBeNull();
+    run(world, 10);
+    expect(summaryFields(world, freshSummaryFields())).toBeNull();
+  });
+
+  it('labels the three outcomes in the words the player reads', () => {
+    expect(OUTCOME_LABELS.dock).toBe('DOCKED');
+    expect(OUTCOME_LABELS.crash).toBe('CRASHED');
+    expect(OUTCOME_LABELS.blackout).toBe('BLACKOUT');
+  });
+
+  it('shows a dock with both figures inside their limits', () => {
+    const { world } = approach(gapForStep(20, 0.3), 0.3, new Vector3(1 * DEG, 0, 0));
+    runUntilContact(world);
+    const f = summaryFields(world, freshSummaryFields())!;
+    expect(f.headline).toBe('DOCKED');
+    expect(f.speed).toBe('0.30');
+    expect(f.speedLimit).toBe('0.50');
+    expect(f.speedOver).toBe(false);
+    expect(f.rotation).toBe('1.0');
+    expect(f.rotationLimit).toBe('2.0');
+    expect(f.rotationOver).toBe(false);
+    expect(f.time).toBe(world.summary!.time.toFixed(1));
+    expect(f.propellant).toBe('0.0');
+    expect(f.peakG).toBe(world.summary!.peakG.toFixed(1));
+  });
+
+  it('flags exactly the figure that lost a crash', () => {
+    const fast = approach(gapForStep(20, 3), 3).world;
+    run(fast, 20);
+    const f = summaryFields(fast, freshSummaryFields())!;
+    expect(f.headline).toBe('CRASHED');
+    expect(f.speedOver).toBe(true);
+    expect(f.rotationOver).toBe(false);
+
+    const spinning = approach(gapForStep(20, 0.3), 0.3, new Vector3(0, 3 * DEG, 0)).world;
+    runUntilContact(spinning);
+    const g = summaryFields(spinning, freshSummaryFields())!;
+    expect(g.headline).toBe('CRASHED');
+    expect(g.speedOver).toBe(false);
+    expect(g.rotationOver).toBe(true);
+  });
+
+  it('flags on the raw figure, not the rounded string', () => {
+    const { world } = approach(gapForStep(20, 0.504), 0.504);
+    run(world, 20);
+    const f = summaryFields(world, freshSummaryFields())!;
+    expect(world.outcome).toBe('crash');
+    expect(f.speed).toBe('0.50');
+    expect(f.speedOver).toBe(true);
+  });
+
+  it('leaves the contact rows empty for a blackout', () => {
+    const { world, ship } = approach(50, 0);
+    ship.pilot!.health = 0;
+    run(world, 1);
+    const f = summaryFields(world, freshSummaryFields())!;
+    expect(f.headline).toBe('BLACKOUT');
+    expect(f.speed).toBe('');
+    expect(f.rotation).toBe('');
+    expect(f.speedOver).toBe(false);
+    expect(f.rotationOver).toBe(false);
   });
 });
