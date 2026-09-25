@@ -46,6 +46,24 @@ export const GLOW_TIERS: ReadonlyArray<readonly [number, number]> = [
 export const CORE_WHITE = 0.55;
 /** Edges between faces meeting at less than this angle are not drawn (degrees). */
 export const CREASE_DEG = 10;
+/**
+ * Hidden-line removal (#47). Every stroke set can carry an OCCLUDER: the object's solid
+ * shape, drawn first, writing depth and no colour. Strokes behind that surface — the
+ * far side of a hoop, a rock behind the hull, stars behind everything — fail the depth
+ * test and vanish, so a wireframe reads as a solid drawn in lines. The occluder is
+ * shrunk a hair inside the strokes so lines ON the near surface still win; polygon
+ * offset would be the usual tool, but it does nothing under a logarithmic depth buffer.
+ */
+export const OCCLUDER_SHRINK = 0.992;
+
+let occluderMaterial: THREE.MeshBasicMaterial | null = null;
+function getOccluderMaterial(): THREE.MeshBasicMaterial {
+  if (!occluderMaterial) {
+    occluderMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true, side: THREE.FrontSide });
+  }
+  return occluderMaterial;
+}
+
 /** Distant strokes fade toward this floor so a far target is a mark, not a glare. */
 export const FAR_MIN_OPACITY = 0.5;
 /** Fade begins below this projected radius (px) and reaches the floor at FAR_MIN_PX. */
@@ -88,6 +106,10 @@ export interface VectorStrokes {
   group: THREE.Group;
   /** one LineSegments2 per glow tier, core first, sharing one geometry */
   tiers: LineSegments2[];
+  /** the depth-only solid, if this set has one */
+  occluder: THREE.Mesh | null;
+  /** give the set a solid shape to hide what is behind it; geometry is taken as-is */
+  setOccluder(geometry: THREE.BufferGeometry): void;
   /** scale every tier's opacity by 0..1 — used to fade distant objects; allocation-free */
   setFade(fade: number): void;
   dispose(): void;
@@ -127,9 +149,20 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
     tiers.push(lines);
   });
   let lastFade = 1;
-  return {
+  const set: VectorStrokes = {
     group,
     tiers,
+    occluder: null,
+    setOccluder(geometry) {
+      if (set.occluder) {
+        group.remove(set.occluder);
+        set.occluder.geometry.dispose();
+      }
+      const mesh = new THREE.Mesh(geometry, getOccluderMaterial());
+      mesh.renderOrder = -100; // before every stroke, so depth is there to test against
+      group.add(mesh);
+      set.occluder = mesh;
+    },
     setFade(fade) {
       const f = Math.max(0, Math.min(1, fade));
       if (f === lastFade) return;
@@ -145,8 +178,10 @@ function buildTiers(fat: LineSegmentsGeometry, color: THREE.ColorRepresentation)
         m.dispose();
       }
       fat.dispose();
+      if (set.occluder) set.occluder.geometry.dispose();
     },
   };
+  return set;
 }
 
 /** Silhouette and crease edges of a mesh geometry, as glowing strokes. */
@@ -158,7 +193,9 @@ export function createVectorLines(
   const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
   const fat = new LineSegmentsGeometry().fromEdgesGeometry(edges);
   edges.dispose();
-  return buildTiers(fat, color);
+  const set = buildTiers(fat, color);
+  set.setOccluder(geometry.clone().scale(OCCLUDER_SHRINK, OCCLUDER_SHRINK, OCCLUDER_SHRINK));
+  return set;
 }
 
 /** Glowing strokes from explicit segment pairs (flat xyz, two points per segment). */
@@ -241,6 +278,50 @@ export function cylinderStrokes(
   }
 }
 
+/** The solid of a cylinder section along Z, shrunk for occlusion. */
+export function cylinderOccluder(radius: number, z0: number, z1: number): THREE.BufferGeometry {
+  const length = Math.abs(z1 - z0) * OCCLUDER_SHRINK;
+  const g = new THREE.CylinderGeometry(radius * OCCLUDER_SHRINK, radius * OCCLUDER_SHRINK, length, 36, 1, false);
+  g.rotateX(Math.PI / 2); // Cylinder is along Y; ours run along Z
+  g.translate(0, 0, (z0 + z1) / 2);
+  return g;
+}
+
+/** The solids of a whole hull, minus any sections in `skip`, merged. */
+export function hullOccluder(
+  sections: ReadonlyArray<{ radius: number; from: number; to: number }>,
+  skip: ReadonlySet<number> = new Set(),
+): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  sections.forEach((sec, i) => { if (!skip.has(i)) parts.push(cylinderOccluder(sec.radius, sec.from, sec.to)); });
+  return mergeGeometries(parts);
+}
+
+/** A port's solid: the hoop, and the collar as an OPEN tube so the hole stays a hole. */
+export function portOccluder(radius: number, tube: number, collar: number): THREE.BufferGeometry {
+  const hoop = new THREE.TorusGeometry(radius, tube * 0.85, 8, 48);
+  if (collar <= 0) return hoop;
+  const wall = new THREE.CylinderGeometry(radius * OCCLUDER_SHRINK, radius * OCCLUDER_SHRINK, collar, 24, 1, true);
+  wall.rotateX(Math.PI / 2);
+  wall.translate(0, 0, -collar / 2);
+  return mergeGeometries([hoop, wall]);
+}
+
+/** Concatenate non-indexed geometries that share the position attribute layout. */
+function mergeGeometries(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const positions: number[] = [];
+  for (const g of parts) {
+    const ng = g.index ? g.toNonIndexed() : g;
+    const p = ng.getAttribute('position');
+    for (let i = 0; i < p.count; i++) positions.push(p.getX(i), p.getY(i), p.getZ(i));
+    if (ng !== g) ng.dispose();
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return out;
+}
+
 /** One hull section on its own, for a section that turns independently of the rest. */
 export function sectionStrokes(
   section: { radius: number; from: number; to: number },
@@ -302,6 +383,16 @@ export function portStrokes(radius: number, tube: number, collar: number): Float
 export const ROCK_MIN_SCALE = 0.62;
 
 export function asteroidStrokes(radius: number, seed: number, detail = 1, creaseDeg = 6): Float32Array {
+  const geometry = asteroidGeometry(radius, seed, detail);
+  const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
+  const out = new Float32Array(edges.getAttribute('position').array as Float32Array);
+  edges.dispose();
+  geometry.dispose();
+  return out;
+}
+
+/** The rock's solid, before it is reduced to edges. Same seed, same rock. */
+export function asteroidGeometry(radius: number, seed: number, detail = 1): THREE.BufferGeometry {
   const next = rng(seed);
   // a handful of dents: a direction, a cap width and a depth each
   const dents = Array.from({ length: 4 + Math.floor(next() * 3) }, () => ({
@@ -328,11 +419,8 @@ export function asteroidStrokes(radius: number, seed: number, detail = 1, crease
     pos.setXYZ(i, d.x * scale * squash.x * radius, d.y * scale * squash.y * radius, d.z * scale * squash.z * radius);
   }
   pos.needsUpdate = true;
-  const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
-  const out = new Float32Array(edges.getAttribute('position').array as Float32Array);
-  edges.dispose();
-  geometry.dispose();
-  return out;
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 /** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */
