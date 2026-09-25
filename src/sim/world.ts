@@ -143,12 +143,16 @@ export function addStructure(
   return { structure: structureIndex, port: anchorTarget };
 }
 
-/** A rock: a sphere the ship must not touch. Drawn tumbled by `orientation`; judged as a sphere. */
+/**
+ * A rock. Judged as a sphere of `radius`; drawn as a lumpy polyhedron that fits inside
+ * that sphere, shaped by `seed` and tumbled by `orientation`.
+ */
 export interface Obstacle {
   name: string;
   position: Vector3;
   radius: number;
   orientation: Quaternion;
+  seed: number;
 }
 
 /** How the run ended in contact: through the ring, or into something solid. */

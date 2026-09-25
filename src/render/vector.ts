@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+import { rng } from '../core/random';
 
 /**
  * Vector-monitor line rendering.
@@ -278,32 +279,45 @@ export function portStrokes(radius: number, tube: number, collar: number): Float
 }
 
 /**
- * A rock as a vector display would draw it: a few great circles at odd angles, so it
- * reads as a lumpy sphere rather than a globe. `circles` planes are spread around a
- * golden-angle spiral for even coverage. Returns flat xyz pairs.
+ * A rock as a vector display would draw it: the edges of a lumpy low-poly polyhedron.
+ * An icosphere is dented by a few seeded caps and squashed along its axes, so every
+ * rock has its own silhouette and the same seed always gives the same rock. Every
+ * vertex stays inside `radius`, which is what the sim judges collisions against.
  */
-export function sphereStrokes(radius: number, circles = 4, segments = 24): Float32Array {
-  const out: number[] = [];
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  for (let c = 0; c < circles; c++) {
-    // plane normal from a spiral on the sphere
-    const y = 1 - (2 * (c + 0.5)) / circles;
-    const r = Math.sqrt(1 - y * y);
-    const t = golden * c;
-    const n = new THREE.Vector3(r * Math.cos(t), y, r * Math.sin(t));
-    const a = Math.abs(n.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-    const u = new THREE.Vector3().crossVectors(n, a).normalize();
-    const v = new THREE.Vector3().crossVectors(n, u);
-    for (let i = 0; i < segments; i++) {
-      const p = (i / segments) * Math.PI * 2;
-      const q = ((i + 1) / segments) * Math.PI * 2;
-      out.push(
-        radius * (u.x * Math.cos(p) + v.x * Math.sin(p)), radius * (u.y * Math.cos(p) + v.y * Math.sin(p)), radius * (u.z * Math.cos(p) + v.z * Math.sin(p)),
-        radius * (u.x * Math.cos(q) + v.x * Math.sin(q)), radius * (u.y * Math.cos(q) + v.y * Math.sin(q)), radius * (u.z * Math.cos(q) + v.z * Math.sin(q)),
-      );
+export const ROCK_MIN_SCALE = 0.62;
+
+export function asteroidStrokes(radius: number, seed: number, detail = 1, creaseDeg = 6): Float32Array {
+  const next = rng(seed);
+  // a handful of dents: a direction, a cap width and a depth each
+  const dents = Array.from({ length: 4 + Math.floor(next() * 3) }, () => ({
+    dir: new THREE.Vector3(next() * 2 - 1, next() * 2 - 1, next() * 2 - 1).normalize(),
+    width: 0.45 + next() * 0.4, // cos of the cap's half-angle: bigger = narrower
+    depth: 0.12 + next() * 0.2,
+  }));
+  const squash = new THREE.Vector3(0.78 + next() * 0.22, 0.78 + next() * 0.22, 0.78 + next() * 0.22);
+
+  const geometry = new THREE.IcosahedronGeometry(1, detail);
+  const pos = geometry.getAttribute('position') as THREE.BufferAttribute;
+  const d = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    d.fromBufferAttribute(pos, i).normalize();
+    let scale = 1;
+    for (const dent of dents) {
+      const c = d.dot(dent.dir);
+      if (c > dent.width) {
+        const t = (c - dent.width) / (1 - dent.width); // 0 at the cap's edge, 1 at its centre
+        scale -= dent.depth * t * t * (3 - 2 * t);
+      }
     }
+    scale = Math.max(ROCK_MIN_SCALE, scale);
+    pos.setXYZ(i, d.x * scale * squash.x * radius, d.y * scale * squash.y * radius, d.z * scale * squash.z * radius);
   }
-  return new Float32Array(out);
+  pos.needsUpdate = true;
+  const edges = new THREE.EdgesGeometry(geometry, creaseDeg);
+  const out = new Float32Array(edges.getAttribute('position').array as Float32Array);
+  edges.dispose();
+  geometry.dispose();
+  return out;
 }
 
 /** On-screen radius in pixels of a sphere of `radius` at `distance`, for a vertical fov in degrees. */

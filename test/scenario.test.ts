@@ -8,7 +8,7 @@ import { createWorld, resetRun, step, STEP, structureStrike, obstacleStrike, typ
 import { createShip, type ShipSpec } from '../src/sim/ship';
 import { emptyCommand } from '../src/control';
 import { summaryFields, freshSummaryFields } from '../src/hud/instruments/summary';
-import { sphereStrokes } from '../src/render/vector';
+import { asteroidStrokes, ROCK_MIN_SCALE } from '../src/render/vector';
 import skiff from '../src/data/skiff.json';
 import capital from '../src/data/capital.json';
 
@@ -161,12 +161,31 @@ describe('rocks are solid', () => {
   });
 });
 
-describe('sphere strokes', () => {
-  it('draws great circles on the surface', () => {
-    const seg = sphereStrokes(5, 4, 24);
-    expect(seg.length / 6).toBe(4 * 24);
+describe('asteroid strokes', () => {
+  it('is a lumpy polyhedron that fits inside its collision sphere', () => {
+    const seg = asteroidStrokes(10, 4242);
+    expect(seg.length % 6).toBe(0);
+    expect(seg.length / 6).toBeGreaterThan(40); // a faceted rock, not a few circles
+    let maxR = 0, minR = Infinity;
     for (let i = 0; i < seg.length; i += 3) {
-      expect(Math.hypot(seg[i]!, seg[i + 1]!, seg[i + 2]!)).toBeCloseTo(5, 4);
+      const r = Math.hypot(seg[i]!, seg[i + 1]!, seg[i + 2]!);
+      maxR = Math.max(maxR, r);
+      minR = Math.min(minR, r);
     }
+    expect(maxR).toBeLessThanOrEqual(10 + 1e-6);      // never outside what the sim judges
+    expect(maxR).toBeGreaterThan(8);                    // but uses most of it
+    expect(minR).toBeGreaterThanOrEqual(10 * ROCK_MIN_SCALE * 0.78 - 1e-6); // dents and squash bounded
+    expect(maxR - minR).toBeGreaterThan(1);             // visibly irregular
+  });
+
+  it('is the same rock for the same seed and a different rock for another', () => {
+    const a = asteroidStrokes(10, 1), b = asteroidStrokes(10, 1), c = asteroidStrokes(10, 2);
+    expect(Array.from(a)).toEqual(Array.from(b));
+    expect(Array.from(a)).not.toEqual(Array.from(c));
+  });
+
+  it('every rock in a scenario carries its own shape seed', () => {
+    const sc = generateScenario(cspec, 9);
+    expect(new Set(sc.obstacles.map((o) => o.seed)).size).toBeGreaterThan(ASTEROID_COUNT * 0.9);
   });
 });
