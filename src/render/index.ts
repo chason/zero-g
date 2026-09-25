@@ -2,8 +2,7 @@ import * as THREE from 'three';
 import type { World, Target } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, torusStrokes, disposeVectorLines, setVectorResolution } from './vector';
-import type { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { createVectorLines, createVectorRing, projectedRadiusPx, setVectorResolution, type VectorRing } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -55,7 +54,7 @@ export function createRenderer(): Renderer {
   // only when a target appears and disposed only when it leaves; the per-frame path just
   // copies transforms. An unlit material is the right choice for an emissive hoop in
   // space: there are no lights in this scene to react to.
-  const targetMeshes = new Map<Target, LineSegments2>();
+  const targetMeshes = new Map<Target, VectorRing>();
   const origin = new THREE.Vector3();
 
   function syncTargets(targets: Target[]): void {
@@ -66,17 +65,18 @@ export function createRenderer(): Renderer {
 
     for (const [target, mesh] of targetMeshes) {
       if (targets.includes(target)) continue;
-      scene.remove(mesh);
-      disposeVectorLines(mesh);
+      scene.remove(mesh.group);
+      mesh.dispose();
       targetMeshes.delete(target);
     }
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       if (targetMeshes.has(target)) continue;
       // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
-      // Hoops and longitudes, as a vector display would draw a torus.
-      const mesh = createVectorStrokes(torusStrokes(target.radius, RING_TUBE), RING_COLOR);
-      scene.add(mesh);
+      // Hoops and longitudes, as a vector display would draw a torus — at three levels
+      // of detail, so a distant ring is a single dim circle rather than a blob.
+      const mesh = createVectorRing(target.radius, RING_TUBE, RING_COLOR);
+      scene.add(mesh.group);
       targetMeshes.set(target, mesh);
     }
   }
@@ -168,8 +168,9 @@ export function createRenderer(): Renderer {
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       const mesh = targetMeshes.get(target)!;
-      mesh.position.copy(target.position as unknown as THREE.Vector3);
-      if (mesh.position.lengthSq() > 0) mesh.lookAt(origin);
+      mesh.group.position.copy(target.position as unknown as THREE.Vector3);
+      if (mesh.group.position.lengthSq() > 0) mesh.group.lookAt(origin);
+      mesh.update(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight));
     }
 
     post.render(scene, camera, world);

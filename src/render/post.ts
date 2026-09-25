@@ -101,9 +101,9 @@ export const SETTLE = 1e-3;
 // ---------------------------------------------------------------------------------------
 
 /** Bloom: how much halo the strokes throw. */
-export const BLOOM_STRENGTH = 1.1;
+export const BLOOM_STRENGTH = 0.9;
 /** Bloom: halo spread, 0..1. */
-export const BLOOM_RADIUS = 0.45;
+export const BLOOM_RADIUS = 0.3;
 /** Bloom: luminance above which a pixel blooms. Low, because the scene is mostly black. */
 export const BLOOM_THRESHOLD = 0.15;
 /**
