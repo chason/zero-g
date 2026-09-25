@@ -9,6 +9,7 @@ import {
   MIN_MARKER_SPEED,
 } from '../src/hud/instruments/markers';
 import type { Target } from '../src/sim/world';
+import { bracketSize, BRACKET_MIN, BRACKET_MAX } from '../src/hud/instruments/target';
 
 const W = 800;
 const H = 600;
@@ -165,5 +166,39 @@ describe('hud overlay: relative velocity for the markers', () => {
 
   it('threshold is the documented 0.05 m/s', () => {
     expect(MIN_MARKER_SPEED).toBe(0.05);
+  });
+});
+
+describe('hud overlay: bracket size clamp', () => {
+  it('a distant target clamps to the minimum', () => {
+    // the placeholder ring: 3 m radius at 400 m, 70 deg vfov on a 1080 px tall screen
+    expect(bracketSize(3, 400, 1080, 70)).toBe(BRACKET_MIN);
+  });
+
+  it('a target filling the view clamps to the maximum', () => {
+    expect(bracketSize(3, 4, 1080, 70)).toBe(BRACKET_MAX);
+  });
+
+  it('zero or negative range (inside the target) is the maximum, never NaN or Infinity', () => {
+    expect(bracketSize(3, 0, 1080, 70)).toBe(BRACKET_MAX);
+    expect(bracketSize(3, -1, 1080, 70)).toBe(BRACKET_MAX);
+  });
+
+  it('between the clamps it follows radius / range and grows on approach', () => {
+    const far = bracketSize(3, 120, 1080, 70);
+    const near = bracketSize(3, 60, 1080, 70);
+    expect(far).toBeGreaterThan(BRACKET_MIN);
+    expect(near).toBeLessThan(BRACKET_MAX);
+    expect(near / far).toBeCloseTo(2, 6);
+    // twice the radius at the same range is the same as half the range
+    expect(bracketSize(6, 120, 1080, 70)).toBeCloseTo(near, 6);
+  });
+
+  it('never leaves the clamp range', () => {
+    for (const range of [0.001, 1, 10, 100, 1e4, 1e7]) {
+      const s = bracketSize(3, range, 1080, 70);
+      expect(s).toBeGreaterThanOrEqual(BRACKET_MIN);
+      expect(s).toBeLessThanOrEqual(BRACKET_MAX);
+    }
   });
 });
