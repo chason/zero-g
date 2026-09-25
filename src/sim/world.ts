@@ -1,6 +1,7 @@
 import { netWrench, massFlow, currentMass, type Ship } from './ship';
-import { integrate, type Wrench } from './body';
-import { Vector3 } from '../core/math';
+import { integrate, feltAcceleration, type Wrench } from './body';
+import { stepPilot } from './pilot';
+import { Vector3, G0 } from '../core/math';
 import type { Command } from '../control';
 
 /** Something the HUD can point at and the pilot can dock with. #25 supplies the real one. */
@@ -37,6 +38,9 @@ const scratchWrench: Wrench = { force: new Vector3(), torque: new Vector3() };
 /** Scratch per-axis clamp suppression, reused for the same reason. */
 const scratchCommanded = { x: false, y: false, z: false };
 
+/** Scratch seat offset in the body frame, reused for the same reason. */
+const scratchSeat = new Vector3();
+
 /**
  * Advance the whole world by exactly `dt` seconds. Never call with a variable dt.
  *
@@ -72,9 +76,18 @@ export function step(world: World, command: Command, dt: number): void {
     ship.propellant = Math.max(0, ship.propellant - burned);
     ship.body.mass = currentMass(ship);
 
-    // 5. pilot g-load and the tolerance reserve — issue #23, not implemented here.
-    //    Call site: feltAcceleration(ship.body, new Vector3(...ship.spec.seatOffset), wrench)
-    //    divided by G0 gives the g felt at the seat; the health system consumes it.
+    // 5. pilot g-load and the tolerance reserve (#23). The g felt at the seat comes from
+    //    this step's wrench and the rates the body now has; the pass reads them and
+    //    writes only `pilot`, never the body. The seat offset is re-read from the spec
+    //    each step so a refit that moves the seat is honoured without a cache to forget.
+    //    Hand-built test fixtures carry no pilot, and get no pilot update.
+    const { pilot } = ship;
+    if (pilot) {
+      const seat = ship.spec.seatOffset;
+      scratchSeat.set(seat[0], seat[1], seat[2]);
+      const felt = feltAcceleration(ship.body, scratchSeat, wrench);
+      stepPilot(pilot, felt.length() / G0, dt);
+    }
   }
 
   world.time += dt;
