@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { OCCLUDER_SHRINK, createVectorLines, createVectorStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidStrokes, hullOccluder, cylinderOccluder, portOccluder, asteroidGeometry, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { OCCLUDER_SHRINK, ORDER_STRIDE, createVectorLines, createVectorStrokes, createCulledStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidEdges, hullOccluder, cylinderOccluder, portOccluder, asteroidGeometry, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes, type CulledStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -86,7 +86,15 @@ export function createRenderer(): Renderer {
   // group that rotates about local Z by the sim's spinAngle for it.
   interface StructureMesh { group: THREE.Group; fixed: VectorStrokes; turning: { index: number; strokes: VectorStrokes }[] }
   const structureMeshes = new Map<Structure, StructureMesh>();
-  const obstacleMeshes = new Map<Obstacle, VectorStrokes>();
+  // Rocks are concave, so their own hidden lines are removed whole, by facing (#49);
+  // their solids still hide what is behind them. For that a rock's strokes must be drawn
+  // before its own solid and after the solids of every rock nearer the camera, so each
+  // frame the rocks are ranked by distance and ordered nearest first, below every other
+  // stroke set. `dist` is scratch for that ranking.
+  const obstacleMeshes = new Map<Obstacle, { strokes: CulledStrokes; dist: number }>();
+  const ranked: { strokes: CulledStrokes; dist: number }[] = [];
+  const byDistance = (a: { dist: number }, b: { dist: number }) => a.dist - b.dist;
+  const ROCK_ORDER_BASE = -100000;
 
   function syncTargets(world: World): void {
     const { targets, structures, assigned } = world;
@@ -137,18 +145,19 @@ export function createRenderer(): Renderer {
     const { obstacles } = world;
     for (const [obstacle, mesh] of obstacleMeshes) {
       if (obstacles.includes(obstacle)) continue;
-      scene.remove(mesh.group);
-      mesh.dispose();
+      scene.remove(mesh.strokes.group);
+      mesh.strokes.dispose();
       obstacleMeshes.delete(obstacle);
     }
     for (const obstacle of obstacles) {
       if (obstacleMeshes.has(obstacle)) continue;
-      const strokes = createVectorStrokes(asteroidStrokes(obstacle.radius, obstacle.seed), ROCK_COLOR);
+      const strokes = createCulledStrokes(asteroidEdges(obstacle.radius, obstacle.seed), ROCK_COLOR);
+      strokes.setOrder(ROCK_ORDER_BASE);
       strokes.setOccluder(asteroidGeometry(obstacle.radius * OCCLUDER_SHRINK, obstacle.seed));
       strokes.group.position.copy(obstacle.position as unknown as THREE.Vector3);
       strokes.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
       scene.add(strokes.group);
-      obstacleMeshes.set(obstacle, strokes);
+      obstacleMeshes.set(obstacle, { strokes, dist: 0 });
     }
   }
 
@@ -251,10 +260,19 @@ export function createRenderer(): Renderer {
       mesh.group.quaternion.copy(structure.orientation as unknown as THREE.Quaternion);
       for (const t of mesh.turning) t.strokes.group.rotation.z = structure.spinAngle[t.index]!;
     }
+    ranked.length = 0;
     for (const obstacle of world.obstacles) {
       const mesh = obstacleMeshes.get(obstacle)!;
-      mesh.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
-      mesh.setFade(ROCK_FADE * farFade(projectedRadiusPx(obstacle.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight)));
+      mesh.strokes.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
+      mesh.dist = camera.position.distanceTo(mesh.strokes.group.position);
+      mesh.strokes.setFade(ROCK_FADE * farFade(projectedRadiusPx(obstacle.radius, mesh.dist, camera.fov, innerHeight)));
+      ranked.push(mesh);
+    }
+    ranked.sort(byDistance);
+    for (let k = 0; k < ranked.length; k++) {
+      const { strokes } = ranked[k]!;
+      strokes.setOrder(ROCK_ORDER_BASE + k * ORDER_STRIDE);
+      strokes.cull(camera.position);
     }
 
     post.render(scene, camera, world);

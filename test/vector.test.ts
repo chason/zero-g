@@ -4,7 +4,8 @@ import {
   edgeSegmentCount, createVectorLines, createVectorStrokes, torusStrokes,
   projectedRadiusPx, farFade,
   GLOW_TIERS, CORE_WHITE, CREASE_DEG, FAR_MIN_OPACITY, FAR_FADE_PX, OCCLUDER_SHRINK,
-  cylinderOccluder, hullOccluder, portOccluder, asteroidGeometry, asteroidStrokes,
+  cylinderOccluder, hullOccluder, portOccluder, asteroidGeometry, asteroidStrokes, asteroidEdges,
+  creaseEdges, frontFacingEdges, createCulledStrokes, ORDER_STRIDE,
 } from '../src/render/vector';
 import { BLOOM_STRENGTH, PHOSPHOR_DECAY } from '../src/render/post';
 
@@ -164,5 +165,100 @@ describe('the glow is in the stroke, not a blur', () => {
     expect(BLOOM_STRENGTH).toBe(0);
     expect(PHOSPHOR_DECAY).toBeGreaterThanOrEqual(0);
     expect(PHOSPHOR_DECAY).toBeLessThan(0.9);
+  });
+});
+
+describe('whole-edge hidden-line removal (#49)', () => {
+  const cube = () => new THREE.BoxGeometry(2, 2, 2);
+
+  it('finds every crease edge of a cube with both of its face normals', () => {
+    const edges = creaseEdges(cube(), 10);
+    expect(edges.count).toBe(12);
+    expect(edges.positions.length).toBe(72);
+    expect(edges.normals.length).toBe(72);
+    for (let e = 0; e < edges.count; e++) {
+      const o = e * 6;
+      const n0 = new THREE.Vector3(edges.normals[o], edges.normals[o + 1], edges.normals[o + 2]);
+      const n1 = new THREE.Vector3(edges.normals[o + 3], edges.normals[o + 4], edges.normals[o + 5]);
+      expect(n0.length()).toBeCloseTo(1, 6);
+      expect(n1.length()).toBeCloseTo(1, 6);
+      expect(Math.abs(n0.dot(n1))).toBeLessThan(1e-6); // a cube's edges join perpendicular faces
+    }
+  });
+
+  it('matches EdgesGeometry on a rock, edge for edge', () => {
+    const g = asteroidGeometry(10, 77);
+    const reference = new THREE.EdgesGeometry(g, 6).getAttribute('position');
+    const ours = creaseEdges(g, 6);
+    expect(ours.count).toBe(reference.count / 2);
+    const key = (x: number, y: number, z: number) => `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+    const segKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    const want = new Set<string>();
+    for (let i = 0; i < reference.count; i += 2) {
+      want.add(segKey(key(reference.getX(i), reference.getY(i), reference.getZ(i)), key(reference.getX(i + 1), reference.getY(i + 1), reference.getZ(i + 1))));
+    }
+    for (let e = 0; e < ours.count; e++) {
+      const o = e * 6;
+      const k = segKey(key(ours.positions[o]!, ours.positions[o + 1]!, ours.positions[o + 2]!), key(ours.positions[o + 3]!, ours.positions[o + 4]!, ours.positions[o + 5]!));
+      expect(want.has(k)).toBe(true);
+    }
+  });
+
+  it('keeps only the edges of faces that face the eye, and keeps them whole', () => {
+    const edges = creaseEdges(cube(), 10);
+    const out = new Float32Array(edges.positions.length);
+    // head-on: the four edges of the near face
+    expect(frontFacingEdges(edges, new THREE.Vector3(0, 0, 10), out)).toBe(4);
+    for (let i = 0; i < 4 * 6; i += 3) expect(out[i + 2]).toBeCloseTo(1, 6); // all at z = +1
+    // from a corner: three faces, nine edges
+    const n = frontFacingEdges(edges, new THREE.Vector3(5, 5, 5), out);
+    expect(n).toBe(9);
+    // every kept segment is one of the input edges, untouched
+    const inputs = new Set<string>();
+    for (let e = 0; e < edges.count; e++) inputs.add(Array.from(edges.positions.subarray(e * 6, e * 6 + 6)).join(','));
+    for (let e = 0; e < n; e++) expect(inputs.has(Array.from(out.subarray(e * 6, e * 6 + 6)).join(','))).toBe(true);
+  });
+
+  it('never leaves a rock edge partial: what it draws is a subset of all edges', () => {
+    const edges = asteroidEdges(10, 4242);
+    const out = new Float32Array(edges.positions.length);
+    const inputs = new Set<string>();
+    for (let e = 0; e < edges.count; e++) inputs.add(Array.from(edges.positions.subarray(e * 6, e * 6 + 6)).join(','));
+    for (const eye of [new THREE.Vector3(0, 0, 300), new THREE.Vector3(-40, 25, 60), new THREE.Vector3(12, -30, -8)]) {
+      const n = frontFacingEdges(edges, eye, out);
+      expect(n).toBeGreaterThan(edges.count * 0.3);
+      expect(n).toBeLessThan(edges.count);
+      for (let e = 0; e < n; e++) expect(inputs.has(Array.from(out.subarray(e * 6, e * 6 + 6)).join(','))).toBe(true);
+    }
+  });
+
+  it('culled strokes draw only the culled count, in the set\'s own frame', () => {
+    const set = createCulledStrokes(creaseEdges(cube(), 10), 0xffffff);
+    const fat = set.tiers[0]!.geometry as THREE.InstancedBufferGeometry;
+    expect(fat.instanceCount).toBe(12);
+    set.group.position.set(100, 0, 0);
+    expect(set.cull(new THREE.Vector3(100, 0, 10))).toBe(4); // head-on, once the offset is removed
+    expect(fat.instanceCount).toBe(4);
+    set.group.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4); // turn 45°: two faces now face +z
+    expect(set.cull(new THREE.Vector3(100, 0, 10))).toBe(7);
+    // every tier shares the one geometry, so the count applies to all of them
+    for (const t of set.tiers) expect((t.geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(7);
+    set.dispose();
+  });
+
+  it('orders a set below its own solid, tiers widest first', () => {
+    const set = createCulledStrokes(creaseEdges(cube(), 10), 0xffffff);
+    set.setOccluder(cube());
+    set.setOrder(-600);
+    expect(set.tiers.map((t) => t.renderOrder)).toEqual([-596, -597, -598, -599, -600].slice(0, GLOW_TIERS.length));
+    expect(set.occluder!.renderOrder).toBe(-600 + GLOW_TIERS.length);
+    expect((set.occluder!.material as THREE.Material).transparent).toBe(true); // sorted with the strokes
+    expect(ORDER_STRIDE).toBe(GLOW_TIERS.length + 1);
+    // an unordered set keeps the old opaque, draw-first solid
+    const plain = createCulledStrokes(creaseEdges(cube(), 10), 0xffffff);
+    plain.setOccluder(cube());
+    expect(plain.occluder!.renderOrder).toBe(-100);
+    expect((plain.occluder!.material as THREE.Material).transparent).toBe(false);
+    set.dispose(); plain.dispose();
   });
 });

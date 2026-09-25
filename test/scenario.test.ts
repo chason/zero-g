@@ -228,19 +228,21 @@ describe('asteroid strokes', () => {
     expect(maxR - minR).toBeGreaterThan(1);             // visibly irregular
   });
 
-  it('is convex: no edge can ever vanish mid-face behind a lip', () => {
+  it('is dented: concave somewhere, on every seed (#49 drew back from convex hulls)', () => {
     for (const seed of [1, 2, 3, 77, 4242]) {
       const g = asteroidGeometry(10, seed);
       const p = g.getAttribute('position');
       const verts: Vector3[] = [];
       for (let i = 0; i < p.count; i++) verts.push(new Vector3(p.getX(i), p.getY(i), p.getZ(i)));
-      // every triangle's plane has every vertex on its inner side
-      for (let i = 0; i + 2 < p.count; i += 3) {
+      // some triangle's plane has a vertex on its outer side
+      let concave = false;
+      for (let i = 0; i + 2 < p.count && !concave; i += 3) {
         const a = verts[i]!, b = verts[i + 1]!, c = verts[i + 2]!;
         const n = new Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
         const d = n.dot(a);
-        for (const v of verts) expect(n.dot(v) - d).toBeLessThanOrEqual(1e-6);
+        concave = verts.some((v) => n.dot(v) - d > 1e-3);
       }
+      expect(concave).toBe(true);
       g.dispose();
     }
   });
