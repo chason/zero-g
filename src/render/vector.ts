@@ -437,12 +437,22 @@ export function hullOccluder(
 /** A port's solid: the hoop, and the collar as an OPEN tube so the hole stays a hole. */
 export function portOccluder(radius: number, tube: number, collar: number): THREE.BufferGeometry {
   const hoop = new THREE.TorusGeometry(radius, tube * 0.85, 8, 48);
-  if (collar <= 0) return hoop;
+  // The hatch (#50): a port is a door into the ship, so its inside hides what is behind
+  // it — the hull's own lattice most of all. A disc recessed half a tube behind the ring
+  // plane keeps the ring's innermost stroke in front of it, and it reaches into the
+  // torus solid so nothing shows between the two.
+  const hatch = new THREE.CircleGeometry(radius - tube * HATCH_INSET, 48);
+  hatch.translate(0, 0, -tube * HATCH_RECESS);
+  if (collar <= 0) return mergeGeometries([hoop, hatch]);
   const wall = new THREE.CylinderGeometry(radius * OCCLUDER_SHRINK, radius * OCCLUDER_SHRINK, collar, 24, 1, true);
   wall.rotateX(Math.PI / 2);
   wall.translate(0, 0, -collar / 2);
-  return mergeGeometries([hoop, wall]);
+  return mergeGeometries([hoop, hatch, wall]);
 }
+/** How far behind the ring plane the hatch sits, in tube radii. */
+export const HATCH_RECESS = 0.5;
+/** How far the hatch's edge stops short of the ring's centreline, in tube radii: inside the solid. */
+export const HATCH_INSET = 0.4;
 
 /** Concatenate non-indexed geometries that share the position attribute layout. */
 function mergeGeometries(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
