@@ -21,6 +21,12 @@
       #hud .inst-rotation .rate-dim { opacity: .45; }
       #hud .inst-rotation .rate-live { opacity: 1; }
       #hud .inst-rotation .rate-alert { opacity: 1; color: #ffb347; font-weight: 700; }
+      /* #19: speed, range and closing rate relative to the target; glanced at constantly on approach */
+      #hud .inst-velocity { top: 16px; left: 50%; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+      /* #22: propellant, current mass and remaining delta-v */
+      #hud .inst-propellant { right: 16px; bottom: 16px; font-variant-numeric: tabular-nums; }
+      #hud .inst-propellant .bar { height: 6px; margin: 2px 0; border: 1px solid currentColor; box-sizing: border-box; }
+      #hud .inst-propellant .fill { height: 100%; width: 100%; background: currentColor; }
     </style>
   </head>
   <body>
