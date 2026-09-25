@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { World, Target, Structure, Obstacle } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
+import { createCockpit } from './cockpit';
 import { OCCLUDER_SHRINK, ORDER_STRIDE, createVectorLines, createVectorStrokes, createCulledStrokes, hullStrokes, sectionStrokes, portStrokes, asteroidEdges, hullOccluder, cylinderOccluder, portOccluder, asteroidGeometry, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes, type CulledStrokes } from './vector';
 
 /**
@@ -73,6 +74,11 @@ export function createRenderer(): Renderer {
   scene.add(ship);
   const plumes = createPlumes(scene, ship);
   const post = createPostProcess(renderer);
+  // The cockpit frame is a child of the camera, so it is drawn in the camera's own frame
+  // and never lags it. A camera only carries children while it is in the scene.
+  const cockpit = createCockpit();
+  camera.add(cockpit.group);
+  scene.add(camera);
 
   // Targets (#25). One torus per entry in world.targets, keyed by the Target object so a
   // list that is replaced wholesale still maps to the same meshes. Geometry is allocated
@@ -222,6 +228,7 @@ export function createRenderer(): Renderer {
         // Three.js camera looks down, so no extra rotation is needed. The hull is hidden
         // because from the seat it would fill the view.
         ship.visible = false;
+        cockpit.group.visible = true;
         const so = s.spec.seatOffset;
         camera.position
           .copy(ship.position)
@@ -229,6 +236,7 @@ export function createRenderer(): Renderer {
         camera.quaternion.copy(ship.quaternion);
       } else {
         ship.visible = true;
+        cockpit.group.visible = false;
         // Camera lag: trail the ship's rotation slightly instead of following rigidly.
         smoothed.slerp(ship.quaternion, 0.12);
         camera.position.copy(ship.position).add(offset.copy(camOffset).applyQuaternion(smoothed));
