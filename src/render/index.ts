@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type { World, Target } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
+import { createVectorLines, createVectorStrokes, torusStrokes, disposeVectorLines, setVectorResolution } from './vector';
+import type { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -32,17 +34,18 @@ export function createRenderer(): Renderer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
+  setVectorResolution(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio());
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1e7);
 
-  // Placeholder hull. Untextured geometry reads perfectly well in space.
-  const ship = new THREE.Mesh(
-    new THREE.ConeGeometry(1.2, 5, 12),
-    new THREE.MeshBasicMaterial({ color: 0x9fd9cc, wireframe: true }),
-  );
-  ship.geometry.rotateX(-Math.PI / 2);
+  // Placeholder hull, drawn as vector strokes: twelve spokes and a rim, glowing.
+  // `ship` is the object everything positions; the strokes hang off it.
+  const hullGeometry = new THREE.ConeGeometry(1.2, 5, 12);
+  hullGeometry.rotateX(-Math.PI / 2);
+  const ship = new THREE.Group();
+  ship.add(createVectorLines(hullGeometry, 0x9fd9cc));
   scene.add(ship);
   const plumes = createPlumes(scene, ship);
   const post = createPostProcess(renderer);
@@ -52,7 +55,7 @@ export function createRenderer(): Renderer {
   // only when a target appears and disposed only when it leaves; the per-frame path just
   // copies transforms. An unlit material is the right choice for an emissive hoop in
   // space: there are no lights in this scene to react to.
-  const targetMeshes = new Map<Target, THREE.Mesh>();
+  const targetMeshes = new Map<Target, LineSegments2>();
   const origin = new THREE.Vector3();
 
   function syncTargets(targets: Target[]): void {
@@ -64,18 +67,15 @@ export function createRenderer(): Renderer {
     for (const [target, mesh] of targetMeshes) {
       if (targets.includes(target)) continue;
       scene.remove(mesh);
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
+      disposeVectorLines(mesh);
       targetMeshes.delete(target);
     }
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       if (targetMeshes.has(target)) continue;
       // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
-      const mesh = new THREE.Mesh(
-        new THREE.TorusGeometry(target.radius, RING_TUBE, 8, 48),
-        new THREE.MeshBasicMaterial({ color: RING_COLOR, wireframe: true }),
-      );
+      // Hoops and longitudes, as a vector display would draw a torus.
+      const mesh = createVectorStrokes(torusStrokes(target.radius, RING_TUBE), RING_COLOR);
       scene.add(mesh);
       targetMeshes.set(target, mesh);
     }
@@ -187,6 +187,7 @@ export function createRenderer(): Renderer {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    setVectorResolution(innerWidth * renderer.getPixelRatio(), innerHeight * renderer.getPixelRatio());
     post.resize();
   }
 

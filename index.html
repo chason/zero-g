@@ -10,8 +10,11 @@
       #hud {
         position: fixed; inset: 0; pointer-events: none; overflow: hidden;
         font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        color: #7fd4c1; text-shadow: 0 0 6px rgba(0,0,0,.9);
+        color: #7fd4c1;
+        /* phosphor: a tight bright core and a wider soft halo, like the strokes in the scene */
+        text-shadow: 0 0 1px rgba(200,255,240,.9), 0 0 6px rgba(127,212,193,.55), 0 0 14px rgba(127,212,193,.25);
       }
+      #hud .inst { filter: drop-shadow(0 0 3px rgba(127,212,193,.45)); }
       /* each instrument owns one .inst and positions itself inside the layer */
       #hud .inst { position: absolute; white-space: pre; }
       /* rotation readout (#18): lower-left, where a pilot glances. Brightness tracks the

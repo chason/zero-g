@@ -1,8 +1,13 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { AfterimagePass } from 'three/addons/postprocessing/AfterimagePass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import type { World } from '../sim/world';
 
 /**
- * Full-screen post pass: the blackout (issue #24).
+ * Full-screen post pipeline: the vector-monitor look (#36) and the blackout (#24).
  *
  * The pilot's g reserve (Pilot.reserve: 1 = fresh, 0 = out) is made felt rather than
  * read. As it drains the view desaturates, then a vignette closes to a tunnel, and at
@@ -11,9 +16,12 @@ import type { World } from '../sim/world';
  * by a few hundred milliseconds on the way back up, so recovery is a fade and not a
  * light switch.
  *
- * At a full reserve, or with no pilot at all, this is exactly renderer.render(): no
- * render target is bound, no quad is drawn, nothing is allocated. The common path costs
- * nothing.
+ * The look comes first in the chain: a phosphor-persistence pass keeps a fading trace
+ * of the last frame, then bloom spreads every bright stroke into a halo, the way a CRT
+ * beam bleeds into the phosphor around it. The blackout is the last stage because it
+ * also performs the sRGB encode for the screen. The pipeline always runs now — with the
+ * bloom on there is no cheaper path — and at a full reserve the blackout stage is an
+ * identity.
  *
  * The pure parts — the reserve → effect-strength curve and the lag — are exported below
  * and specified by test/post.test.ts. The GL parts run only in a browser and are checked
@@ -87,6 +95,22 @@ export const ONSET_TAU = 0.08;
 export const RECOVERY_TAU = 0.35;
 /** Within this of the target the felt value snaps onto it, so a full reserve is reached EXACTLY and the pass switches itself off. */
 export const SETTLE = 1e-3;
+
+// ---------------------------------------------------------------------------------------
+// Vector-monitor look (#36). All exported so the feel can be tuned without reading code.
+// ---------------------------------------------------------------------------------------
+
+/** Bloom: how much halo the strokes throw. */
+export const BLOOM_STRENGTH = 1.1;
+/** Bloom: halo spread, 0..1. */
+export const BLOOM_RADIUS = 0.45;
+/** Bloom: luminance above which a pixel blooms. Low, because the scene is mostly black. */
+export const BLOOM_THRESHOLD = 0.15;
+/**
+ * Phosphor persistence: fraction of last frame's light kept each frame. 0 = none.
+ * 0.55 decays to under 5% in five frames — a faint trail on fast rotation, no smear.
+ */
+export const PHOSPHOR_DECAY = 0.55;
 
 /**
  * One step of the lag: move `current` toward `target` over `dt` seconds with first-order
@@ -172,7 +196,7 @@ void main() {
 `;
 
 export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
-  // Felt reserve: the single float the whole effect is driven by. Starts full.
+  // Felt reserve: the single float the blackout is driven by. Starts full.
   let felt = 1;
   let lastTime = NaN;
   const curve: BlackoutCurve = { desaturate: 0, vignette: 0, darken: 0 };
@@ -184,52 +208,50 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
     uDarken: { value: 0 },
     uAspect: { value: 1 },
   };
-  const material = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader,
-    fragmentShader,
-    depthTest: false,
-    depthWrite: false,
-  });
-  // A single oversized triangle instead of a two-triangle quad: no diagonal seam, and
-  // the vertex shader places it in clip space directly, so the camera below is only
-  // there because renderer.render() needs one.
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
-  const quad = new THREE.Mesh(geometry, material);
-  quad.frustumCulled = false;
-  const quadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const blackout = new ShaderPass(
+    new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, depthTest: false, depthWrite: false }),
+  );
 
-  // Created the first time the effect is needed, never on the common path.
-  let target: THREE.WebGLRenderTarget | null = null;
+  // Pipeline: scene -> phosphor persistence -> bloom halo -> blackout (which also does
+  // the sRGB encode, so it must stay last). Half float keeps the dark scene free of
+  // banding and lets bright strokes exceed 1.0 for the bloom; 4x MSAA matches the
+  // antialiased canvas so nothing pops.
   const scratchSize = new THREE.Vector2();
+  const size = renderer.getSize(scratchSize);
+  const ratio = renderer.getPixelRatio();
+  const target = new THREE.WebGLRenderTarget(Math.max(1, size.x * ratio), Math.max(1, size.y * ratio), {
+    type: THREE.HalfFloatType,
+    samples: 4,
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  const composer = new EffectComposer(renderer, target);
+  composer.setPixelRatio(ratio);
+  composer.setSize(size.x, size.y);
 
-  /** Match the render target to the drawing buffer: CSS size times the renderer's pixel ratio. */
-  function fit(): THREE.WebGLRenderTarget {
-    const size = renderer.getSize(scratchSize);
-    const ratio = renderer.getPixelRatio();
-    const width = Math.max(1, Math.floor(size.x * ratio));
-    const height = Math.max(1, Math.floor(size.y * ratio));
-    if (!target) {
-      target = new THREE.WebGLRenderTarget(width, height, {
-        // Half float keeps the linear scene free of banding in the darks, which is where
-        // this effect lives; 4x MSAA matches the antialiased canvas so nothing pops when
-        // the pass engages.
-        type: THREE.HalfFloatType,
-        samples: 4,
-        minFilter: THREE.NearestFilter,
-        magFilter: THREE.NearestFilter,
-        depthBuffer: true,
-        stencilBuffer: false,
-      });
-      uniforms.tDiffuse.value = target.texture;
-    } else if (target.width !== width || target.height !== height) {
-      target.setSize(width, height);
-    }
-    uniforms.uAspect.value = width / height;
-    return target;
+  // RenderPass needs a scene and camera at construction; the real ones are swapped in
+  // on every render() so the pass never holds a stale reference.
+  const renderPass = new RenderPass(new THREE.Scene(), new THREE.Camera());
+  const afterimage = new AfterimagePass(PHOSPHOR_DECAY);
+  const bloom = new UnrealBloomPass(
+    new THREE.Vector2(size.x * ratio, size.y * ratio),
+    BLOOM_STRENGTH,
+    BLOOM_RADIUS,
+    BLOOM_THRESHOLD,
+  );
+  composer.addPass(renderPass);
+  if (PHOSPHOR_DECAY > 0) composer.addPass(afterimage);
+  composer.addPass(bloom);
+  composer.addPass(blackout);
+
+  function fit(): void {
+    const s = renderer.getSize(scratchSize);
+    const r = renderer.getPixelRatio();
+    composer.setPixelRatio(r);
+    composer.setSize(s.x, s.y);
+    uniforms.uAspect.value = s.x / s.y;
   }
+  fit();
 
   return {
     render(scene, camera, world) {
@@ -243,25 +265,17 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
       felt = Number.isNaN(dt) ? wanted : chase(felt, wanted, dt);
       amount = 1 - felt;
 
-      if (felt >= 1) {
-        // Common path: identical to having no post pass at all.
-        renderer.render(scene, camera);
-        return;
-      }
-
       blackoutCurve(felt, curve);
       uniforms.uDesaturate.value = curve.desaturate;
       uniforms.uVignette.value = curve.vignette;
       uniforms.uDarken.value = curve.darken;
 
-      renderer.setRenderTarget(fit());
-      renderer.render(scene, camera);
-      renderer.setRenderTarget(null);
-      renderer.render(quad, quadCamera);
+      renderPass.scene = scene;
+      renderPass.camera = camera;
+      composer.render();
     },
     resize() {
-      // Nothing to resize until the effect has been needed once; fit() then sizes it.
-      if (target) fit();
+      fit();
     },
   };
 }
