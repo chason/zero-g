@@ -14,6 +14,8 @@
       }
       /* each instrument owns one .inst and positions itself inside the layer */
       #hud .inst { position: absolute; white-space: pre; }
+      /* #19: speed, range and closing rate relative to the target; glanced at constantly on approach */
+      #hud .inst-velocity { top: 16px; left: 50%; transform: translateX(-50%); font-variant-numeric: tabular-nums; }
     </style>
   </head>
   <body>
