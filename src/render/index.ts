@@ -248,6 +248,7 @@ export function createRenderer(): Renderer {
     }
     for (const obstacle of world.obstacles) {
       const mesh = obstacleMeshes.get(obstacle)!;
+      mesh.group.quaternion.copy(obstacle.orientation as unknown as THREE.Quaternion);
       mesh.setFade(ROCK_FADE * farFade(projectedRadiusPx(obstacle.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight)));
     }
 
