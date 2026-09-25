@@ -10,6 +10,7 @@ import {
   RECOVERY_TAU,
   SETTLE,
   type BlackoutCurve,
+  phosphorDamp, PHOSPHOR_FRAME_S, PHOSPHOR_DECAY,
 } from '../src/render/post';
 
 /** Reserve values from full to empty, inclusive, evenly spaced. */
@@ -193,5 +194,39 @@ describe('post: felt reserve chases the real one', () => {
 describe('post: audio hook', () => {
   it('reports no blackout before anything has rendered', () => {
     expect(blackoutAmount()).toBe(0);
+  });
+});
+
+describe('phosphor persistence on the wall clock (#61)', () => {
+  it('is the nominal decay for a sixtieth of a second, and its square for a thirtieth', () => {
+    expect(phosphorDamp(PHOSPHOR_FRAME_S)).toBeCloseTo(PHOSPHOR_DECAY, 12);
+    expect(phosphorDamp(2 * PHOSPHOR_FRAME_S)).toBeCloseTo(PHOSPHOR_DECAY * PHOSPHOR_DECAY, 12);
+    expect(phosphorDamp(PHOSPHOR_FRAME_S / 2)).toBeCloseTo(Math.sqrt(PHOSPHOR_DECAY), 12);
+  });
+
+  it('falls back to the nominal decay for the first frame, and all but clears after a long gap', () => {
+    expect(phosphorDamp(NaN)).toBe(PHOSPHOR_DECAY);
+    expect(phosphorDamp(0)).toBe(PHOSPHOR_DECAY);
+    expect(phosphorDamp(-1)).toBe(PHOSPHOR_DECAY);
+    expect(phosphorDamp(Infinity)).toBe(PHOSPHOR_DECAY);
+    expect(phosphorDamp(5)).toBeLessThan(1e-3); // a tab-out: capped, not zero, but as good as
+    expect(phosphorDamp(5)).toBe(phosphorDamp(0.25));
+  });
+
+  it('leaves the same light after the same time whatever the frame rate', () => {
+    // 100 ms at 240, 60 and 24 Hz: the product of each frame's damping is the same
+    const after = (fps: number) => phosphorDamp(1 / fps) ** (0.1 * fps);
+    expect(after(240)).toBeCloseTo(after(60), 9);
+    expect(after(24)).toBeCloseTo(after(60), 9);
+  });
+
+  it("keeps the trail under a tenth of a second at any rate: the shader's 10% cut-off comes at the same moment", () => {
+    for (const fps of [20, 24, 30, 48, 60, 90, 120, 144, 240]) {
+      const damp = phosphorDamp(1 / fps);
+      let frames = 0;
+      for (let light = damp; light >= 0.1; light *= damp) frames++;
+      expect(frames / fps, `${fps} fps`).toBeLessThan(0.1);
+      expect(frames, `${fps} fps`).toBeGreaterThanOrEqual(1); // but never nothing: a trail is the look
+    }
   });
 });

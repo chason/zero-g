@@ -110,10 +110,28 @@ export const BLOOM_RADIUS = 0.3;
 /** Bloom: luminance above which a pixel blooms. Low, because the scene is mostly black. */
 export const BLOOM_THRESHOLD = 0.15;
 /**
- * Phosphor persistence: fraction of last frame's light kept each frame. 0 = none.
- * 0.55 decays to under 5% in five frames — a faint trail on fast rotation, no smear.
+ * Phosphor persistence: fraction of last frame's light kept over one PHOSPHOR_FRAME_S.
+ * 0 = none. 0.55 decays to under 5% in five such frames — a faint trail on fast rotation,
+ * no smear. Applied per unit of TIME, not per rendered frame (#61): the afterimage
+ * shader also cuts anything below 10% dead, so at a fixed per-frame rate a machine
+ * rendering at 25 fps showed the same three ghosts as one at 60, but spread over more
+ * than twice the angle and lasting more than twice as long — a rock became a stack of
+ * rocks. `phosphorDamp` keeps the trail the same fraction of a second everywhere.
  */
 export const PHOSPHOR_DECAY = 0.55;
+/** The frame PHOSPHOR_DECAY is quoted for: one sixtieth of a second. */
+export const PHOSPHOR_FRAME_S = 1 / 60;
+
+/**
+ * The damping to apply this frame, for a frame that took `dt` seconds of wall clock:
+ * PHOSPHOR_DECAY raised to the frame's length in sixtieths, so the light left after any
+ * span of time is the same at 30, 60 or 240 Hz. A non-positive or non-finite dt (the
+ * first frame) gets the nominal value; a long one (a tab-out) all but clears the trail.
+ */
+export function phosphorDamp(dt: number): number {
+  if (!(dt > 0) || !Number.isFinite(dt)) return PHOSPHOR_DECAY;
+  return Math.pow(PHOSPHOR_DECAY, Math.min(dt, 0.25) / PHOSPHOR_FRAME_S);
+}
 
 /**
  * One step of the lag: move `current` toward `target` over `dt` seconds with first-order
@@ -198,10 +216,18 @@ void main() {
 }
 `;
 
-export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
+export interface PostProcessOptions {
+  /** Wall clock in milliseconds, for the phosphor decay. Injectable; defaults to performance.now(). */
+  now?: () => number;
+}
+
+export function createPostProcess(renderer: THREE.WebGLRenderer, options: PostProcessOptions = {}): PostProcess {
+  const now = options.now ?? (() => performance.now());
   // Felt reserve: the single float the blackout is driven by. Starts full.
   let felt = 1;
   let lastTime = NaN;
+  /** wall clock of the last frame, ms: the phosphor runs on real time, so a paused sim still fades */
+  let lastWall = NaN;
   const curve: BlackoutCurve = { desaturate: 0, vignette: 0, darken: 0 };
 
   const uniforms = {
@@ -276,6 +302,12 @@ export function createPostProcess(renderer: THREE.WebGLRenderer): PostProcess {
       uniforms.uDesaturate.value = curve.desaturate;
       uniforms.uVignette.value = curve.vignette;
       uniforms.uDarken.value = curve.darken;
+
+      // Phosphor on the wall clock, not sim time: a paused sim must not freeze the trail
+      // in place, and a slow machine must not stretch it.
+      const wall = now();
+      afterimage.uniforms.damp!.value = phosphorDamp(Number.isNaN(lastWall) ? NaN : (wall - lastWall) / 1000);
+      lastWall = wall;
 
       renderPass.scene = scene;
       renderPass.camera = camera;
