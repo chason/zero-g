@@ -14,6 +14,17 @@
       }
       /* each instrument owns one .inst and positions itself inside the layer */
       #hud .inst { position: absolute; white-space: pre; }
+      /* #20 prograde/retrograde markers: zero-size anchor at the layer origin; glyphs are
+         moved with transform: translate() in screen px so no frame re-runs layout */
+      #hud .inst-markers { left: 0; top: 0; width: 0; height: 0; overflow: visible; }
+      #hud .marker {
+        position: absolute; left: 0; top: 0; font-size: 22px; line-height: 1;
+        will-change: transform;
+      }
+      #hud .marker-prograde { color: #a8ff9e; }
+      #hud .marker-retrograde { color: #ffb36b; }
+      /* clamped to the viewport edge: the shortest turn toward it, not where it is */
+      #hud .marker.is-edge { opacity: .55; }
     </style>
   </head>
   <body>
