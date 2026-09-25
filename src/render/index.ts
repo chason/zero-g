@@ -17,6 +17,8 @@ export interface Renderer {
   resize(): void;
   /** Flip between the pilot's seat and the lagged chase camera. Returns the mode now active. */
   toggleView(): ViewMode;
+  /** read-only: the mode in effect — the HUD hides what the dash shows in the cockpit */
+  readonly view: ViewMode;
   canvas: HTMLCanvasElement;
   /** read-only: the HUD projects world points through this */
   camera: THREE.PerspectiveCamera;
@@ -229,6 +231,7 @@ export function createRenderer(): Renderer {
         // because from the seat it would fill the view.
         ship.visible = false;
         cockpit.group.visible = true;
+        cockpit.update(world);
         const so = s.spec.seatOffset;
         camera.position
           .copy(ship.position)
@@ -303,5 +306,5 @@ export function createRenderer(): Renderer {
   }
 
   addEventListener('resize', resize);
-  return { draw, resize, toggleView, canvas: renderer.domElement, camera };
+  return { draw, resize, toggleView, canvas: renderer.domElement, camera, get view() { return view; } };
 }

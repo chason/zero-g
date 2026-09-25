@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   cockpitStrokes, dashGeometry, createCockpit, COCKPIT_POLYLINES, COCKPIT_FADE, DASH_SETBACK, CLEAR_TAN,
-  COCKPIT_SCALE, DASH_DEPTH, DASH_OUTLINE, COAMING, LEFT_PILLAR, LEFT_SPAR,
+  COCKPIT_SCALE, DASH_DEPTH, DASH_OUTLINE, COAMING, LEFT_PILLAR, LEFT_SPAR, DASH_SOLID_DEPTH,
 } from '../src/render/cockpit';
 import { GLOW_TIERS } from '../src/render/vector';
 import { PLUME_LENGTH, PLUME_RADIUS, plumeScale } from '../src/render/plumes';
@@ -96,14 +96,17 @@ describe('cockpit frame (#51, #53)', () => {
     expect(lowest).toBeLessThan(-TAN_HALF_V * 1.5);
     // the whole width of the bottom edge is dash, on a 16:9 window
     for (let u = -TAN_HALF_H; u <= TAN_HALF_H; u += 0.05) expect(dashTopAt(u)).toBeGreaterThan(-TAN_HALF_V);
-    // the dash's corner, pushed out by the setback, is a dash vertex
+    // the dash's corner, pushed out to the solid's depth and by the setback, is a dash vertex
     const [corner] = COAMING;
+    const k = DASH_SETBACK * DASH_SOLID_DEPTH;
     let found = false;
     for (let i = 0; i < p.count; i++) {
-      if (Math.abs(p.getX(i) - corner![0] * DASH_SETBACK) < 1e-6 && Math.abs(p.getY(i) - corner![1] * DASH_SETBACK) < 1e-6) found = true;
+      if (Math.abs(p.getX(i) - corner![0] * k) < 1e-6 && Math.abs(p.getY(i) - corner![1] * k) < 1e-6) found = true;
     }
     expect(found).toBe(true);
     expect(DASH_SETBACK).toBeGreaterThan(1);
+    // and the solid is behind the frame's strokes and the instruments' face, which lie nearer than DASH_SOLID_DEPTH
+    expect(DASH_SOLID_DEPTH).toBeGreaterThan(1.1);
   });
 
   it('draws the dash nearer than every forward thruster nozzle, and past the near plane (#52)', () => {
