@@ -165,6 +165,24 @@ export function createShip(spec: ShipSpec): Ship {
   };
 }
 
+/**
+ * Put a ship back to the state createShip() made it in, IN PLACE, so every reference
+ * held by the renderer, HUD and control layer stays valid. Body (including its
+ * `previous` pose), propellant, pilot and throttles are rebuilt from the spec; the
+ * precomputed thruster table is untouched because nothing about the hull changed.
+ * Issue #34.
+ */
+export function resetShip(ship: Ship): void {
+  const { spec } = ship;
+  ship.body = createBody({
+    mass: spec.dryMass + spec.propellantCapacity,
+    inertia: new Vector3(...spec.inertia),
+  });
+  ship.propellant = spec.propellantCapacity;
+  if (ship.pilot) ship.pilot = createPilot();
+  ship.throttles.fill(0);
+}
+
 /** Total kg/s currently being consumed. Feeds back into mass, which feeds back into acceleration. */
 export function massFlow(ship: Ship): number {
   const { prepared, throttles } = ship;
