@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import type { World, Target } from '../sim/world';
+import type { World, Target, Structure } from '../sim/world';
 import { createPlumes } from './plumes';
 import { createPostProcess } from './post';
-import { createVectorLines, createVectorStrokes, torusStrokes, tenderHullStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
+import { createVectorLines, createVectorStrokes, hullStrokes, portStrokes, projectedRadiusPx, farFade, setVectorResolution, type VectorStrokes } from './vector';
 
 /**
  * Reads world state, never writes it. Three.js transforms are an OUTPUT of the
@@ -43,9 +43,13 @@ function softSprite(): THREE.Texture {
 }
 
 /** Ring tube radius, metres. Thin enough to read as a hoop, thick enough to survive 400 m. */
+/** The assigned port: the one thing on screen that is warm. */
 const RING_COLOR = 0xffb347;
-/** The tender's hull: dimmer and cooler than the ring so the docking target stays the eye's focus. */
-const HULL_COLOR = 0x6f9fae;
+/** Every other port: present, but not the eye's target. */
+const PORT_COLOR = 0x7f9fae;
+/** Structure hulls: dimmer and cooler still, and held at a fraction of full stroke opacity. */
+const HULL_COLOR = 0x4f7584;
+const HULL_FADE = 0.55;
 
 export function createRenderer(): Renderer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
@@ -72,35 +76,40 @@ export function createRenderer(): Renderer {
   // only when a target appears and disposed only when it leaves; the per-frame path just
   // copies transforms. An unlit material is the right choice for an emissive hoop in
   // space: there are no lights in this scene to react to.
-  const targetMeshes = new Map<Target, { ring: VectorStrokes; hull: VectorStrokes; group: THREE.Group }>();
-  const unitZ = new THREE.Vector3(0, 0, 1);
+  // Ports (#25, #42): one stroke set per target, keyed by the Target object so a
+  // replaced list rebuilds only what changed. The assigned port is drawn warm.
+  const targetMeshes = new Map<Target, { strokes: VectorStrokes; assigned: boolean }>();
+  const structureMeshes = new Map<Structure, VectorStrokes>();
 
-  function syncTargets(targets: Target[]): void {
-    // Cheap membership check first, so the steady state touches nothing.
-    let dirty = targetMeshes.size !== targets.length;
-    for (let i = 0; !dirty && i < targets.length; i++) dirty = !targetMeshes.has(targets[i]!);
-    if (!dirty) return;
-
+  function syncTargets(world: World): void {
+    const { targets, structures, assigned } = world;
     for (const [target, mesh] of targetMeshes) {
-      if (targets.includes(target)) continue;
-      scene.remove(mesh.group);
-      mesh.ring.dispose();
-      mesh.hull.dispose();
+      const idx = targets.indexOf(target);
+      if (idx >= 0 && mesh.assigned === (idx === assigned)) continue;
+      scene.remove(mesh.strokes.group);
+      mesh.strokes.dispose();
       targetMeshes.delete(target);
     }
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i]!;
       if (targetMeshes.has(target)) continue;
-      // The torus radius IS the contact radius: what the pilot sees is what the sim tests.
-      // The ring as hoops and longitudes, and the hull behind it as cylinders along the
-      // group's -Z. No level of detail: the glow is bounded per stroke, so a distant
-      // tender merges into a solid mark of its own colour instead of blooming.
-      const ring = createVectorStrokes(torusStrokes(target.radius, target.tube), RING_COLOR);
-      const hull = createVectorStrokes(tenderHullStrokes(target.hull), HULL_COLOR);
-      const group = new THREE.Group();
-      group.add(ring.group, hull.group);
-      scene.add(group);
-      targetMeshes.set(target, { ring, hull, group });
+      const isAssigned = i === assigned;
+      const strokes = createVectorStrokes(portStrokes(target.radius, target.tube, target.collar), isAssigned ? RING_COLOR : PORT_COLOR);
+      scene.add(strokes.group);
+      targetMeshes.set(target, { strokes, assigned: isAssigned });
+    }
+    for (const [structure, mesh] of structureMeshes) {
+      if (structures.includes(structure)) continue;
+      scene.remove(mesh.group);
+      mesh.dispose();
+      structureMeshes.delete(structure);
+    }
+    for (const structure of structures) {
+      if (structureMeshes.has(structure)) continue;
+      const strokes = createVectorStrokes(hullStrokes(structure.hull), HULL_COLOR);
+      strokes.setFade(HULL_FADE);
+      scene.add(strokes.group);
+      structureMeshes.set(structure, strokes);
     }
   }
 
@@ -130,6 +139,7 @@ export function createRenderer(): Renderer {
   let view: ViewMode = 'cockpit';
   ship.visible = false;
 
+  const unitZ = new THREE.Vector3(0, 0, 1);
   const camOffset = new THREE.Vector3(0, 2.2, 11);
   const smoothed = new THREE.Quaternion();
   // Scratch space for the per-frame pose. draw() runs at display rate and allocates nothing.
@@ -186,20 +196,20 @@ export function createRenderer(): Renderer {
     }
     if (s) plumes.update(s);
 
-    // Targets are sim state too: position and axis copied out every frame, never owned
-    // here.
-    const { targets } = world;
-    syncTargets(targets);
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i]!;
+    // Targets and structures are sim state: pose copied out every frame, never owned
+    // here. A port's local +Z is its open side; a structure's local +Z is its length.
+    syncTargets(world);
+    for (let i = 0; i < world.targets.length; i++) {
+      const target = world.targets[i]!;
       const mesh = targetMeshes.get(target)!;
-      mesh.group.position.copy(target.position as unknown as THREE.Vector3);
-      // Local +Z is the open side; the hull runs down -Z. Oriented from the target's own
-      // axis, so a tender can face any way the data says.
-      mesh.group.quaternion.setFromUnitVectors(unitZ, target.axis as unknown as THREE.Vector3);
-      const fade = farFade(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.group.position), camera.fov, innerHeight));
-      mesh.ring.setFade(fade);
-      mesh.hull.setFade(fade);
+      mesh.strokes.group.position.copy(target.position as unknown as THREE.Vector3);
+      mesh.strokes.group.quaternion.setFromUnitVectors(unitZ, target.axis as unknown as THREE.Vector3);
+      mesh.strokes.setFade(farFade(projectedRadiusPx(target.radius, camera.position.distanceTo(mesh.strokes.group.position), camera.fov, innerHeight)));
+    }
+    for (const structure of world.structures) {
+      const mesh = structureMeshes.get(structure)!;
+      mesh.group.position.copy(structure.position as unknown as THREE.Vector3);
+      mesh.group.quaternion.copy(structure.orientation as unknown as THREE.Quaternion);
     }
 
     post.render(scene, camera, world);

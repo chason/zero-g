@@ -152,7 +152,7 @@ describe('hud overlay: relative velocity for the markers', () => {
   const out = new Vector3();
 
   it('subtracts the target velocity', () => {
-    const target: Target = { name: 't', position: new Vector3(), velocity: new Vector3(1, 0, 0), axis: new Vector3(0, 0, 1), radius: 1, tube: 0.1, hull: [] };
+    const target: Target = { name: 't', position: new Vector3(), velocity: new Vector3(1, 0, 0), axis: new Vector3(0, 0, 1), radius: 1, tube: 0.1, structure: -1, collar: 0 };
     relativeVelocity(new Vector3(1, 0, 0), target, out);
     expect(out.length()).toBe(0);
   });

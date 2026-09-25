@@ -1,29 +1,61 @@
 import { netWrench, massFlow, currentMass, dockingPortPosition, resetShip, type Ship } from './ship';
 import { integrate, feltAcceleration, type Wrench } from './body';
 import { stepPilot } from './pilot';
-import { Vector3, G0 } from '../core/math';
+import { Vector3, Quaternion, G0 } from '../core/math';
 import type { Command } from '../control';
 
-/** One cylindrical section of a target's hull, measured along its axis behind the ring plane. */
+/** One cylindrical section of a structure's hull, along its local +Z, metres from its origin. */
 export interface HullSection {
   radius: number;
-  /** metres behind the ring plane where the section starts */
   from: number;
-  /** metres behind the ring plane where it ends */
   to: number;
   label?: string;
 }
 
+/** A docking port as it appears in a structure's data file, in the structure's frame. */
+export interface PortSpec {
+  id: string;
+  /** on the hull surface */
+  position: [number, number, number];
+  /** unit, pointing out of the hull */
+  normal: [number, number, number];
+  radius: number;
+  tube: number;
+  /** metres the ring stands proud of the hull on its collar */
+  collar: number;
+}
+
+/** A capital ship or station as it appears in a data file. */
+export interface StructureSpec {
+  name: string;
+  hull: HullSection[];
+  ports: PortSpec[];
+}
+
 /**
- * Something the HUD can point at and the pilot can dock with: a docking ring on the
- * nose of a hull. The ring has a back — the hull is behind it — so it can only be
- * entered from the open side, and that is enforced by geometry, not by a rule. #41.
+ * Something big and solid the ports are mounted on. Its hull is cylinders along its
+ * own local +Z; `orientation` takes local to world. Striking it is a crash. #42.
+ */
+export interface Structure {
+  name: string;
+  position: Vector3;
+  orientation: Quaternion;
+  velocity: Vector3;
+  hull: HullSection[];
+  /** indices into world.targets of the ports mounted on this structure */
+  ports: number[];
+}
+
+/**
+ * A docking port: something the HUD can point at and the pilot can dock with. The ring
+ * has a back — the structure is behind it — so it can only be entered from the open
+ * side, and that is enforced by geometry, not by a rule.
  */
 export interface Target {
   name: string;
   /** world frame, metres: the centre of the ring */
   position: Vector3;
-  /** world frame, m/s — zero for a static target */
+  /** world frame, m/s */
   velocity: Vector3;
   /** unit vector, world frame, pointing OUT of the ring toward the open side */
   axis: Vector3;
@@ -31,32 +63,75 @@ export interface Target {
   radius: number;
   /** ring tube radius, metres; the hoop itself is solid */
   tube: number;
-  /** cylinders behind the ring plane, along -axis */
-  hull: HullSection[];
+  /** index into world.structures, or -1 for a free-floating ring */
+  structure: number;
+  /** metres from the hull surface to the ring plane, for drawing the collar */
+  collar: number;
+}
+
+/** A free-floating ring with nothing behind it — for tests and fixtures. */
+export function createPort(name: string, position: Vector3, axis: Vector3, radius = 3, tube = 0.18): Target {
+  return { name, position: position.clone(), velocity: new Vector3(), axis: axis.clone().normalize(), radius, tube, structure: -1, collar: 0 };
+}
+
+/**
+ * Add a structure to the world, placed so that the port named `portId` has its ring
+ * centred at `ringPosition` facing `ringAxis`. `rollDeg` then turns the structure
+ * about that axis, since facing alone leaves it free to spin — 0 is whatever the
+ * shortest rotation gives. Returns the structure index and the target index of that port.
+ */
+export function placeStructure(
+  world: World,
+  spec: StructureSpec,
+  portId: string,
+  ringPosition: Vector3,
+  ringAxis: Vector3,
+  rollDeg = 0,
+): { structure: number; port: number } {
+  const anchor = spec.ports.find((p) => p.id === portId);
+  if (!anchor) throw new Error(`structure ${spec.name} has no port ${portId}`);
+  const axis = ringAxis.clone().normalize();
+  const facing = new Quaternion().setFromUnitVectors(new Vector3(...anchor.normal).normalize(), axis);
+  const roll = new Quaternion().setFromAxisAngle(axis, (rollDeg * Math.PI) / 180);
+  const orientation = roll.multiply(facing);
+  const anchorRing = new Vector3(...anchor.position).addScaledVector(new Vector3(...anchor.normal).normalize(), anchor.collar);
+  const position = ringPosition.clone().sub(anchorRing.applyQuaternion(orientation));
+
+  const structureIndex = world.structures.length;
+  const structure: Structure = {
+    name: spec.name,
+    position,
+    orientation,
+    velocity: new Vector3(),
+    hull: spec.hull.map((h) => ({ ...h })),
+    ports: [],
+  };
+  world.structures.push(structure);
+
+  let anchorTarget = -1;
+  for (const p of spec.ports) {
+    const normal = new Vector3(...p.normal).normalize();
+    const local = new Vector3(...p.position).addScaledVector(normal, p.collar);
+    const target: Target = {
+      name: `${spec.name} ${p.id}`,
+      position: local.applyQuaternion(orientation).add(position),
+      velocity: new Vector3(),
+      axis: normal.clone().applyQuaternion(orientation),
+      radius: p.radius,
+      tube: p.tube,
+      structure: structureIndex,
+      collar: p.collar,
+    };
+    const idx = world.targets.length;
+    world.targets.push(target);
+    structure.ports.push(idx);
+    if (p.id === portId) anchorTarget = idx;
+  }
+  return { structure: structureIndex, port: anchorTarget };
 }
 
 /** How the run ended in contact: through the ring, or into something solid. */
 export type ContactKind = 'ring' | 'hull';
-
-/** A dockable ship as it appears in a data file: a ring and the hull behind it. */
-export interface TenderSpec {
-  name: string;
-  ring: { radius: number; tube: number };
-  hull: HullSection[];
-}
-
-/** Place a tender at `position` with its ring facing `axis` (the open side). */
-export function createTarget(spec: TenderSpec, position: Vector3, axis: Vector3, velocity = new Vector3()): Target {
-  return {
-    name: spec.name,
-    position: position.clone(),
-    velocity: velocity.clone(),
-    axis: axis.clone().normalize(),
-    radius: spec.ring.radius,
-    tube: spec.ring.tube,
-    hull: spec.hull.map((h) => ({ ...h })),
-  };
-}
 
 /**
  * The moment a ship's docking port first entered a target's contact radius (#25). Filled
@@ -84,7 +159,7 @@ export interface Contact {
  * How a run ends (#26). 'dock' and 'crash' are the two readings of a contact; 'blackout'
  * is the pilot's health reaching zero with no contact made. A run has exactly one.
  */
-export type RunOutcome = 'dock' | 'crash' | 'blackout';
+export type RunOutcome = 'dock' | 'crash' | 'blackout' | 'wrong-port';
 
 /** What the run summary shows once the outcome is decided. Filled at that step, never after. */
 export interface RunSummary {
@@ -100,14 +175,20 @@ export interface RunSummary {
   contactRotation?: number;
   /** for a crash into something solid: what was hit */
   struck?: string;
+  /** for a wrong-port dock: the port that was entered */
+  port?: string;
 }
 
 export interface World {
   ships: Ship[];
-  /** all selectable targets; Tab cycles (#21) */
+  /** all selectable targets (docking ports); Tab cycles (#21) */
   targets: Target[];
   /** index into targets, or -1 for none */
   selected: number;
+  /** the port this run must dock at, or -1 for any (#42) */
+  assigned: number;
+  /** the solid things ports are mounted on */
+  structures: Structure[];
   /** simulated seconds since start */
   time: number;
   /** the first docking-port contact this run, or null while still flying (#25) */
@@ -136,7 +217,7 @@ export function resetRun(world: World): void {
 }
 
 export function createWorld(ships: Ship[] = []): World {
-  return { ships, targets: [], selected: -1, time: 0, contact: null, outcome: null, summary: null };
+  return { ships, targets: [], selected: -1, assigned: -1, structures: [], time: 0, contact: null, outcome: null, summary: null };
 }
 
 const RAD_TO_DEG = 180 / Math.PI;
@@ -256,29 +337,36 @@ export function targetFrame(target: Target, p: Vector3, out: { axial: number; ra
 const frameCom = { axial: 0, radial: 0 };
 const framePort = { axial: 0, radial: 0 };
 
+const scratchLocal = new Vector3();
+const scratchInv = new Quaternion();
+
 /**
- * A solid strike against the target: the ship's hull sphere overlapping a hull section
- * or the ring's tube. Returns what was struck, or null.
+ * A solid strike against a structure: the ship's hull sphere overlapping a hull
+ * section. Measured in the structure's own frame. Returns the section label, or null.
  */
-export function hullStrike(target: Target, com: Vector3, shipRadius: number): string | null {
-  targetFrame(target, com, frameCom);
-  const { axial, radial } = frameCom;
-  // the hoop itself: a ring of tube radius at ring radius, in the ring plane
-  if (Math.abs(axial) <= shipRadius + target.tube) {
-    const inPlane = Math.abs(radial - target.radius);
-    if (inPlane <= target.tube + shipRadius) return 'ring';
-  }
-  for (const section of target.hull) {
+export function structureStrike(structure: Structure, com: Vector3, shipRadius: number): string | null {
+  scratchInv.copy(structure.orientation).invert();
+  scratchLocal.copy(com).sub(structure.position).applyQuaternion(scratchInv);
+  const axial = scratchLocal.z;
+  const radial = Math.hypot(scratchLocal.x, scratchLocal.y);
+  for (const section of structure.hull) {
     if (axial < section.from - shipRadius || axial > section.to + shipRadius) continue;
     if (radial <= section.radius + shipRadius) return section.label ?? 'hull';
   }
   return null;
 }
 
+/** The hoop of a port is solid: the ship's hull sphere touching its tube is a strike. */
+export function ringStrike(target: Target, com: Vector3, shipRadius: number): boolean {
+  targetFrame(target, com, frameCom);
+  if (Math.abs(frameCom.axial) > shipRadius + target.tube) return false;
+  return Math.abs(frameCom.radial - target.radius) <= target.tube + shipRadius;
+}
+
 /**
  * The port through the hoop: at the ring plane, inside the hoop with clearance, and
  * the ship on the open side — which nose-first approach guarantees, since the port
- * leads the centre of mass; a backwards ship has already struck the neck.
+ * leads the centre of mass; a backwards ship has already struck the hull.
  */
 export function throughRing(target: Target, port: Vector3, com: Vector3): boolean {
   targetFrame(target, port, framePort);
@@ -288,10 +376,10 @@ export function throughRing(target: Target, port: Vector3, com: Vector3): boolea
   return frameCom.axial < 0;
 }
 
-function recordContact(world: World, ship: Ship, target: Target, j: number, kind: ContactKind, struck?: string): void {
-  scratchRelVel.copy(ship.body.velocity).sub(target.velocity);
+function recordContact(world: World, ship: Ship, targetIndex: number, relativeTo: Vector3, kind: ContactKind, struck?: string): void {
+  scratchRelVel.copy(ship.body.velocity).sub(relativeTo);
   world.contact = {
-    targetIndex: j,
+    targetIndex,
     kind,
     ...(struck !== undefined ? { struck } : {}),
     relativeSpeed: scratchRelVel.length(),
@@ -302,49 +390,56 @@ function recordContact(world: World, ship: Ship, target: Target, j: number, kind
 
 function detectContact(world: World): void {
   if (world.contact !== null) return;
-  const { ships, targets } = world;
+  const { ships, targets, structures } = world;
   for (let i = 0; i < ships.length; i++) {
     const ship = ships[i]!;
     const shipRadius = ship.spec.hullRadius ?? DEFAULT_HULL_RADIUS;
     dockingPortPosition(ship, scratchPort);
-    for (let j = 0; j < targets.length; j++) {
-      const target = targets[j]!;
-      // A strike is judged before the ring so that clipping the hoop on the way in
-      // is a crash, not a dock.
-      const struck = hullStrike(target, ship.body.position, shipRadius);
+    // Strikes are judged before any ring, so clipping a hoop or the hull on the way in
+    // is a crash, not a dock.
+    for (let k = 0; k < structures.length; k++) {
+      const structure = structures[k]!;
+      const struck = structureStrike(structure, ship.body.position, shipRadius);
       if (struck !== null) {
-        recordContact(world, ship, target, j, 'hull', struck);
+        recordContact(world, ship, structure.ports[0] ?? -1, structure.velocity, 'hull', struck);
         return;
       }
+    }
+    for (let j = 0; j < targets.length; j++) {
+      const target = targets[j]!;
+      if (ringStrike(target, ship.body.position, shipRadius)) {
+        recordContact(world, ship, j, target.velocity, 'hull', 'ring');
+        return;
+      }
+    }
+    for (let j = 0; j < targets.length; j++) {
+      const target = targets[j]!;
       if (throughRing(target, scratchPort, ship.body.position)) {
-        recordContact(world, ship, target, j, 'ring');
+        recordContact(world, ship, j, target.velocity, 'ring');
         return;
       }
     }
   }
 }
 
-/**
- * Decide the run from what the step just produced, and freeze it if it is over.
- *
- * A contact is judged on the numbers recorded at the instant it happened, against the
- * limits above. Without a contact, a pilot at zero health is a blackout. A contact and
- * a blackout on the same step read as the contact: the ship arrived, and how it arrived
- * is the more specific verdict. The summary is taken from the player's ship (ships[0]),
- * which is the ship the renderer and HUD already assume.
- *
- * Throttles are closed at the outcome so nothing downstream — plumes, the thruster
- * schematic — shows a frozen ship as still firing. The command keeps arriving from the
- * input layer; the frozen step simply never applies it.
- */
 function resolveOutcome(world: World): void {
   const { contact } = world;
   if (contact !== null) {
+    if (contact.kind === 'hull') {
+      endRun(world, 'crash', contact);
+      return;
+    }
     const clean =
-      contact.kind === 'ring' &&
       contact.relativeSpeed <= DOCK_MAX_SPEED &&
       contact.residualRotationDegPerSec <= DOCK_MAX_ROTATION_DEG_PER_SEC;
-    endRun(world, clean ? 'dock' : 'crash', contact);
+    if (!clean) {
+      endRun(world, 'crash', contact);
+      return;
+    }
+    // A clean entry into a port that is not the assigned one is its own failure: the
+    // flying was fine, the navigation was not.
+    const wrongPort = world.assigned >= 0 && contact.targetIndex !== world.assigned;
+    endRun(world, wrongPort ? 'wrong-port' : 'dock', contact);
     return;
   }
   for (const ship of world.ships) {
@@ -366,6 +461,7 @@ function endRun(world: World, outcome: RunOutcome, contact: Contact | null): voi
     summary.contactSpeed = contact.relativeSpeed;
     summary.contactRotation = contact.residualRotationDegPerSec;
     if (contact.kind === 'hull') summary.struck = contact.struck ?? 'hull';
+    if (outcome === 'wrong-port') summary.port = world.targets[contact.targetIndex]?.name ?? 'unknown';
   }
   world.outcome = outcome;
   world.summary = summary;
