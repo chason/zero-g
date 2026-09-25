@@ -32,6 +32,62 @@ export function createWorld(ships: Ship[] = []): World {
   return { ships, targets: [], selected: -1, time: 0 };
 }
 
+/**
+ * Radius of the v1 play space, in metres: no ship or target may be further than this from
+ * the world origin. Decided in issue #17; the README section "Play-space scale" has the
+ * reasoning. In short: the sim is float64 and does not care, but every transform reaches
+ * the GPU as float32, whose resolution is ~1 mm at 10 km and ~1 cm at 100 km. Jitter turns
+ * visible once that approaches the smallest feature the camera can see, so 10 km is an
+ * order of magnitude of margin under content that today sits 400 m out. Raise this and you
+ * are signing up for a floating origin; do not raise it quietly.
+ */
+export const PLAY_SPACE_RADIUS = 10_000;
+
+const PLAY_SPACE_RADIUS_SQ = PLAY_SPACE_RADIUS * PLAY_SPACE_RADIUS;
+
+/** Worlds that have already been warned about, so a runaway ship logs once, not 120 times a second. */
+const warnedWorlds = new WeakSet<World>();
+
+/**
+ * Cheap insurance that the play-space limit is enforced rather than remembered. Returns
+ * true when every ship and target is within PLAY_SPACE_RADIUS of the origin. Otherwise
+ * console.warns once per world naming the first offender and returns false. Called from
+ * step(); costs one lengthSq per body and allocates nothing on the in-bounds path.
+ */
+export function assertWithinPlaySpace(world: World): boolean {
+  let offender: string | null = null;
+  let distanceSq = 0;
+  for (const ship of world.ships) {
+    const d2 = ship.body.position.lengthSq();
+    if (d2 > PLAY_SPACE_RADIUS_SQ) {
+      offender = `ship "${ship.spec.name}"`;
+      distanceSq = d2;
+      break;
+    }
+  }
+  if (offender === null) {
+    for (const target of world.targets) {
+      const d2 = target.position.lengthSq();
+      if (d2 > PLAY_SPACE_RADIUS_SQ) {
+        offender = `target "${target.name}"`;
+        distanceSq = d2;
+        break;
+      }
+    }
+  }
+  if (offender === null) return true;
+  if (!warnedWorlds.has(world)) {
+    warnedWorlds.add(world);
+    console.warn(
+      `[zero-g] ${offender} is ${(Math.sqrt(distanceSq) / 1000).toFixed(1)} km from the origin; ` +
+        `the v1 play space is ${PLAY_SPACE_RADIUS / 1000} km. Beyond it float32 render transforms ` +
+        `jitter. Move the content inboard, or implement a floating origin — see #17 and the README ` +
+        `section "Play-space scale".`,
+    );
+  }
+  return false;
+}
+
 /** Scratch wrench, reused every tick so the hot path allocates nothing. */
 const scratchWrench: Wrench = { force: new Vector3(), torque: new Vector3() };
 
@@ -91,4 +147,5 @@ export function step(world: World, command: Command, dt: number): void {
   }
 
   world.time += dt;
+  assertWithinPlaySpace(world);
 }
