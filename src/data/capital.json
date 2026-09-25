@@ -3,7 +3,7 @@
   "hull": [
     { "radius": 16, "from":   0, "to":  50, "label": "bow"       },
     { "radius": 28, "from":  50, "to": 130, "label": "forebody"  },
-    { "radius": 38, "from": 130, "to": 210, "label": "refinery"  },
+    { "radius": 38, "from": 130, "to": 210, "label": "refinery", "spinDegPerSec": 6 },
     { "radius": 26, "from": 210, "to": 280, "label": "aft"       },
     { "radius": 18, "from": 280, "to": 320, "label": "drive"     }
   ],
