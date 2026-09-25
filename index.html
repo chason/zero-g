@@ -27,6 +27,35 @@
       #hud .inst-propellant { right: 16px; bottom: 16px; font-variant-numeric: tabular-nums; }
       #hud .inst-propellant .bar { height: 6px; margin: 2px 0; border: 1px solid currentColor; box-sizing: border-box; }
       #hud .inst-propellant .fill { height: 100%; width: 100%; background: currentColor; }
+      /* #20 prograde/retrograde markers: zero-size anchor at the layer origin; glyphs are
+         moved with transform: translate() in screen px so no frame re-runs layout */
+      #hud .inst-markers { left: 0; top: 0; width: 0; height: 0; overflow: visible; }
+      #hud .marker {
+        position: absolute; left: 0; top: 0; font-size: 22px; line-height: 1;
+        will-change: transform;
+      }
+      #hud .marker-prograde { color: #a8ff9e; }
+      #hud .marker-retrograde { color: #ffb36b; }
+      /* clamped to the viewport edge: the shortest turn toward it, not where it is */
+      #hud .marker.is-edge { opacity: .55; }
+      /* #21 target bracket + edge arrow: same zero-size anchor, moved with translate() */
+      #hud .inst-target { left: 0; top: 0; width: 0; height: 0; overflow: visible; }
+      #hud .tgt-bracket { position: absolute; left: 0; top: 0; will-change: transform; }
+      #hud .tgt-tick { position: absolute; width: 28%; height: 28%; border: 0 solid currentColor; }
+      #hud .tgt-tick.tl { left: 0; top: 0; border-top-width: 1.5px; border-left-width: 1.5px; }
+      #hud .tgt-tick.tr { right: 0; top: 0; border-top-width: 1.5px; border-right-width: 1.5px; }
+      #hud .tgt-tick.bl { left: 0; bottom: 0; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+      #hud .tgt-tick.br { right: 0; bottom: 0; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+      #hud .tgt-name { position: absolute; left: 100%; top: 0; margin-left: 8px; white-space: nowrap; }
+      #hud .tgt-arrow { position: absolute; left: 0; top: 0; will-change: transform; }
+      /* CSS triangle pointing +x, tip at the arrow's origin (the edge point), rotated about the tip */
+      #hud .tgt-arrow-head {
+        position: absolute; left: -16px; top: -7px; width: 0; height: 0;
+        border-top: 7px solid transparent; border-bottom: 7px solid transparent;
+        border-left: 16px solid currentColor;
+        transform-origin: 16px 7px;
+      }
+      #hud .tgt-arrow-name { position: absolute; left: 0; top: 0; white-space: nowrap; }
     </style>
   </head>
   <body>
