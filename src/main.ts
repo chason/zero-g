@@ -57,6 +57,12 @@ function frame() {
       // and this command is simply not consumed; at 30 Hz four steps share it. Both are
       // correct — the command is the pilot's demand, not a per-step quantity.
       const axes = device.sample(frameDt);
+      // Edge flags are true for exactly the one frame their key went down. The view is a
+      // render concern; the target selection is world state the HUD reads (#21).
+      if (axes.toggleView) renderer.toggleView();
+      if (axes.cycleTarget && world.targets.length > 0) {
+        world.selected = (world.selected + 1) % world.targets.length;
+      }
       resolve(skiff, axes, command);
 
       while (accumulator >= STEP) {

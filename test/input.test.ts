@@ -311,3 +311,77 @@ describe('lifecycle', () => {
     expect(h.mouse.count('pointerlockchange')).toBe(0);
   });
 });
+
+describe('edge-triggered keys', () => {
+  const cases: Array<['KeyV' | 'Tab', 'toggleView' | 'cycleTarget']> = [
+    ['KeyV', 'toggleView'],
+    ['Tab', 'cycleTarget'],
+  ];
+
+  for (const [code, flag] of cases) {
+    it(`${flag} is true for exactly one sample per ${code} press and false while held`, () => {
+      const h = harness();
+      expect(h.device.sample(0)[flag]).toBe(false);
+
+      h.keys.emit('keydown', { code });
+      expect(h.device.sample(0)[flag]).toBe(true);
+      // still held: the next frames must NOT see it again
+      expect(h.device.sample(0)[flag]).toBe(false);
+      expect(h.device.sample(0)[flag]).toBe(false);
+      // browser auto-repeat while held is not a new press either
+      h.keys.emit('keydown', { code, repeat: true });
+      expect(h.device.sample(0)[flag]).toBe(false);
+      // and a second keydown with no keyup in between (some sources omit repeat) is ignored
+      h.keys.emit('keydown', { code });
+      expect(h.device.sample(0)[flag]).toBe(false);
+
+      h.keys.emit('keyup', { code });
+      expect(h.device.sample(0)[flag]).toBe(false);
+
+      // released and pressed again: a fresh edge
+      h.keys.emit('keydown', { code });
+      expect(h.device.sample(0)[flag]).toBe(true);
+      expect(h.device.sample(0)[flag]).toBe(false);
+    });
+
+    it(`${flag} latches a tap that starts and ends between two samples, once`, () => {
+      const h = harness();
+      h.keys.emit('keydown', { code });
+      h.keys.emit('keyup', { code });
+      expect(h.device.sample(0)[flag]).toBe(true);
+      expect(h.device.sample(0)[flag]).toBe(false);
+    });
+
+    it(`${code} leaves every axis and the held flags alone`, () => {
+      const h = harness();
+      h.keys.emit('keydown', { code });
+      const axes = h.device.sample(0);
+      expect(axes.translate).toEqual({ x: 0, y: 0, z: 0 });
+      expect(axes.rotate).toEqual({ x: 0, y: 0, z: 0 });
+      expect(axes.fine).toBe(false);
+      expect(axes.cutAll).toBe(false);
+    });
+  }
+
+  it('the two flags are independent of each other', () => {
+    const h = harness();
+    h.keys.emit('keydown', { code: 'KeyV' });
+    let axes = h.device.sample(0);
+    expect(axes.toggleView).toBe(true);
+    expect(axes.cycleTarget).toBe(false);
+    h.keys.emit('keydown', { code: 'Tab' });
+    axes = h.device.sample(0);
+    expect(axes.toggleView).toBe(false);
+    expect(axes.cycleTarget).toBe(true);
+  });
+
+  it('Tab prevents the browser default so focus never leaves the canvas', () => {
+    const h = harness();
+    let prevented = 0;
+    h.keys.emit('keydown', { code: 'Tab', preventDefault: () => { prevented += 1; } });
+    expect(prevented).toBe(1);
+    // V has no default worth suppressing
+    h.keys.emit('keydown', { code: 'KeyV', preventDefault: () => { prevented += 1; } });
+    expect(prevented).toBe(1);
+  });
+});
